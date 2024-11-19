@@ -95,7 +95,10 @@ describe("YieldStreamerHarness", function () {
     const tokenMock = await tokenMockFactory.deploy("Mock Token", "MTK");
     await tokenMock.waitForDeployment();
 
-    const yieldStreamerHarness: Contract = await upgrades.deployProxy(yieldStreamerHarnessFactory, [tokenMock.target]);
+    const yieldStreamerHarness: Contract = await upgrades.deployProxy(
+      yieldStreamerHarnessFactory,
+      [getAddress(tokenMock)]
+    );
     await yieldStreamerHarness.waitForDeployment();
 
     await tokenMock.setHook(yieldStreamerHarness.target);

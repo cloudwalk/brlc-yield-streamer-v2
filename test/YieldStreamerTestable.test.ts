@@ -3,6 +3,7 @@ import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
 import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { setUpFixture } from "../test-utils/common";
+import { getAddress } from "../test-utils/eth";
 
 const NEGATIVE_TIME_SHIFT = 10800n; // 3 hours
 const RATE_FACTOR = 1000000000000n; // 10^12
@@ -76,7 +77,7 @@ describe("YieldStreamerTestable", async () => {
     await tokenMock.waitForDeployment();
 
     const yieldStreamerTestable: Contract = await upgrades.deployProxy(yieldStreamerTestableFactory, [
-      tokenMock.target
+      getAddress(tokenMock)
     ]);
     await yieldStreamerTestable.waitForDeployment();
 

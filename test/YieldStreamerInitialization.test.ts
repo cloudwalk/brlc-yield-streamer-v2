@@ -3,24 +3,15 @@ import { ethers, network, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import { proveTx } from "../test-utils/eth";
+import { getAddress, proveTx } from "../test-utils/eth";
+import { setUpFixture } from "../test-utils/common";
 
 interface Fixture {
   yieldStreamerInitialization: Contract;
   yieldStreamerV1: Contract;
 }
 
-async function setUpFixture<T>(func: () => Promise<T>): Promise<T> {
-  if (network.name === "hardhat") {
-    // Use Hardhat's snapshot functionality for faster test execution
-    return loadFixture(func);
-  } else {
-    // Directly execute the function if not on Hardhat network
-    return func();
-  }
-}
-
-describe("YieldStreamerConfiguration", function () {
+describe("Contract 'YieldStreamer', the initialization part", function () {
   const EVENT_NAME_ACCOUNT_INITIALIZED = "YieldStreamer_AccountInitialized";
   const EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED = "YieldStreamer_SourceYieldStreamerChanged";
   const EVENT_NAME_GROUP_MAPPED = "YieldStreamer_GroupMapped";
@@ -39,7 +30,7 @@ describe("YieldStreamerConfiguration", function () {
   let user2: HardhatEthersSigner;
 
   // Get the signer representing the test user before the tests run
-  before(async function () {
+  before(async () => {
     [user1, user2] = await ethers.getSigners();
 
     // Contract factories with the explicitly specified deployer account
@@ -58,7 +49,7 @@ describe("YieldStreamerConfiguration", function () {
 
     const yieldStreamerInitialization: Contract = await upgrades.deployProxy(
       yieldStreamerInitializationFactory,
-      [tokenMock.target]
+      [getAddress(tokenMock)]
     );
 
     await yieldStreamerInitialization.waitForDeployment();
