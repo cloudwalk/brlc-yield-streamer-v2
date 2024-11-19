@@ -253,11 +253,11 @@ abstract contract YieldStreamerPrimary is
      * @param account The account to get the claim preview for.
      * @return A `ClaimPreview` struct containing details of the claimable yield.
      */
-    function _getClaimPreview(address account, uint256 currentTimestamp) internal view returns (ClaimPreview memory) {
+    function _getClaimPreview(address account, uint256 currentTimestamp, bool round) internal view returns (ClaimPreview memory) {
         YieldStreamerStorageLayout storage $ = _yieldStreamerStorage();
         YieldState storage state = $.yieldStates[account];
         YieldRate[] storage rates = $.yieldRates[$.groups[account].id];
-        return _map(_getAccruePreview(state, rates, currentTimestamp));
+        return _map(_getAccruePreview(state, rates, currentTimestamp), round);
     }
 
     /**
@@ -1031,11 +1031,12 @@ abstract contract YieldStreamerPrimary is
      * @dev Maps an `AccruePreview` struct to a `ClaimPreview` struct.
      *
      * @param accruePreview The `AccruePreview` struct to map from.
+     * @param round Whether to round the yield and fee amounts.
      * @return claimPreview The resulting `ClaimPreview` struct.
      */
-    function _map(AccruePreview memory accruePreview) internal pure returns (ClaimPreview memory claimPreview) {
+    function _map(AccruePreview memory accruePreview, bool round) internal pure returns (ClaimPreview memory claimPreview) {
         uint256 totalYield = accruePreview.accruedYieldAfter + accruePreview.streamYieldAfter;
-        claimPreview.yield = _roundDown(totalYield);
+        claimPreview.yield = round ? _roundDown(totalYield) : totalYield;
         claimPreview.fee = 0; // Fees are not supported yet.
         claimPreview.timestamp = accruePreview.toTimestamp;
         claimPreview.balance = accruePreview.balance;

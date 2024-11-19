@@ -2290,56 +2290,56 @@ describe("YieldStreamerTestable", async () => {
   });
 
   describe("Function 'map()'", async () => {
-    it("Should map as expected", async () => {
+    // Create an `AccruePreview` struct with sample data
+    const accruePreview: AccruePreview = {
+      fromTimestamp: 10000000n,
+      toTimestamp: 20000000n,
+      balance: 30000000n,
+      streamYieldBefore: 199996n,
+      accruedYieldBefore: 299996n,
+      streamYieldAfter: 499996n,
+      accruedYieldAfter: 399996n,
+      rates: [
+        {
+          tiers: [
+            { rate: 101n, cap: 102n },
+            { rate: 201n, cap: 202n }
+          ],
+          effectiveDay: 1n
+        },
+        {
+          tiers: [
+            { rate: 301n, cap: 302n },
+            { rate: 401n, cap: 402n }
+          ],
+          effectiveDay: 9n
+        }
+      ],
+      results: [
+        {
+          partialFirstDayYield: 111n,
+          fullDaysYield: 211n,
+          partialLastDayYield: 311n,
+          partialFirstDayYieldTiered: [101n, 10n],
+          fullDaysYieldTiered: [201n, 10n],
+          partialLastDayYieldTiered: [301n, 10n]
+        },
+        {
+          partialFirstDayYield: 411n,
+          fullDaysYield: 511n,
+          partialLastDayYield: 611n,
+          partialFirstDayYieldTiered: [401n, 10n],
+          fullDaysYieldTiered: [501n, 10n],
+          partialLastDayYieldTiered: [601n, 10n]
+        }
+      ]
+    };
+
+    it("Should map as expected (rounded)", async () => {
       const { yieldStreamerTestable } = await setUpFixture(deployContracts);
 
-      // Create an `AccruePreview` struct with sample data
-      const accruePreview: AccruePreview = {
-        fromTimestamp: 10000000n,
-        toTimestamp: 20000000n,
-        balance: 30000000n,
-        streamYieldBefore: 199996n,
-        accruedYieldBefore: 299996n,
-        streamYieldAfter: 499996n,
-        accruedYieldAfter: 399996n,
-        rates: [
-          {
-            tiers: [
-              { rate: 101n, cap: 102n },
-              { rate: 201n, cap: 202n }
-            ],
-            effectiveDay: 1n
-          },
-          {
-            tiers: [
-              { rate: 301n, cap: 302n },
-              { rate: 401n, cap: 402n }
-            ],
-            effectiveDay: 9n
-          }
-        ],
-        results: [
-          {
-            partialFirstDayYield: 111n,
-            fullDaysYield: 211n,
-            partialLastDayYield: 311n,
-            partialFirstDayYieldTiered: [101n, 10n],
-            fullDaysYieldTiered: [201n, 10n],
-            partialLastDayYieldTiered: [301n, 10n]
-          },
-          {
-            partialFirstDayYield: 411n,
-            fullDaysYield: 511n,
-            partialLastDayYield: 611n,
-            partialFirstDayYieldTiered: [401n, 10n],
-            fullDaysYieldTiered: [501n, 10n],
-            partialLastDayYieldTiered: [601n, 10n]
-          }
-        ]
-      };
-
       // Call the `map` function
-      const claimPreviewRaw: ClaimPreview = await yieldStreamerTestable.map(accruePreview);
+      const claimPreviewRaw: ClaimPreview = await yieldStreamerTestable.map(accruePreview, true);
 
       // Create the `ClaimPreview` struct with expected values
       const expectedClaimPreview: ClaimPreview = {
@@ -2352,6 +2352,37 @@ describe("YieldStreamerTestable", async () => {
       };
 
       // Assertion
+      expect(accruePreview.accruedYieldAfter + accruePreview.streamYieldAfter).not.to.equal(
+        roundDown(accruePreview.accruedYieldAfter + accruePreview.streamYieldAfter)
+      );
+      expect(expectedClaimPreview.yield).to.equal(claimPreviewRaw.yield);
+      expect(expectedClaimPreview.fee).to.equal(claimPreviewRaw.fee);
+      expect(expectedClaimPreview.timestamp).to.equal(claimPreviewRaw.timestamp);
+      expect(expectedClaimPreview.balance).to.equal(claimPreviewRaw.balance);
+      expect(expectedClaimPreview.rates).to.deep.equal(claimPreviewRaw.rates);
+      expect(expectedClaimPreview.caps).to.deep.equal(claimPreviewRaw.caps);
+    });
+
+    it("Should map as expected (not rounded)", async () => {
+      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+
+      // Call the `map` function
+      const claimPreviewRaw: ClaimPreview = await yieldStreamerTestable.map(accruePreview, false);
+
+      // Create the `ClaimPreview` struct with expected values
+      const expectedClaimPreview: ClaimPreview = {
+        yield: accruePreview.accruedYieldAfter + accruePreview.streamYieldAfter,
+        balance: accruePreview.balance,
+        fee: 0n,
+        timestamp: accruePreview.toTimestamp,
+        rates: accruePreview.rates[accruePreview.rates.length - 1].tiers.map(tier => tier.rate),
+        caps: accruePreview.rates[accruePreview.rates.length - 1].tiers.map(tier => tier.cap)
+      };
+
+      // Assertion
+      expect(accruePreview.accruedYieldAfter + accruePreview.streamYieldAfter).not.to.equal(
+        roundDown(accruePreview.accruedYieldAfter + accruePreview.streamYieldAfter)
+      );
       expect(expectedClaimPreview.yield).to.equal(claimPreviewRaw.yield);
       expect(expectedClaimPreview.fee).to.equal(claimPreviewRaw.fee);
       expect(expectedClaimPreview.timestamp).to.equal(claimPreviewRaw.timestamp);
