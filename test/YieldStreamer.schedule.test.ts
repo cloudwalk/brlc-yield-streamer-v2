@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers, network, upgrades } from "hardhat";
 import { Contract } from "ethers";
-import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
 import { checkEquality } from "../test-utils/eth";
 
@@ -168,7 +168,7 @@ async function setUpFixture<T>(func: () => Promise<T>): Promise<T> {
   }
 }
 
-describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function () {
+describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function() {
   let user: SignerWithAddress;
   let adjustedBlockTime: number;
   const EXPECTED_VERSION: Version = {
@@ -178,7 +178,7 @@ describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function () {
   };
 
   // Get the signer representing the test user and adjusted block time before the tests run
-  before(async function () {
+  before(async function() {
     [user] = await ethers.getSigners();
     adjustedBlockTime = await getAdjustedBlockTime();
   });
@@ -202,8 +202,8 @@ describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function () {
     return { erc20Token, yieldStreamer };
   }
 
-  describe("Function 'deposit()'", function () {
-    it("Should correctly update state for Deposit Schedule 1", async function () {
+  describe("Function 'deposit()'", function() {
+    it("Should correctly update state for Deposit Schedule 1", async function() {
       const { erc20Token, yieldStreamer } = await setUpFixture(deployContracts);
 
       // Simulated action schedule of deposits
@@ -470,7 +470,7 @@ describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function () {
     });
   });
 
-  describe("Function 'withdraw()'", function () {
+  describe("Function 'withdraw()'", function() {
     it("Should correctly update state for Withdraw Schedule 1", async () => {
       const { erc20Token, yieldStreamer } = await setUpFixture(deployContracts);
 
@@ -740,7 +740,7 @@ describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function () {
 
   describe("Function '$__VERSION()'", async () => {
     it("Returns expected values", async () => {
-      const { yieldStreamer} = await setUpFixture(deployContracts);
+      const { yieldStreamer } = await setUpFixture(deployContracts);
       const yieldStreamerVersion = await yieldStreamer.$__VERSION();
       checkEquality(yieldStreamerVersion, EXPECTED_VERSION);
     });
