@@ -61,7 +61,7 @@ function checkEquality<T extends Record<string, unknown>>(actualObject: T, expec
   });
 }
 
-describe("YieldStreamerHarness", function() {
+describe("YieldStreamerHarness", async () => {
   // Errors of the lib contracts
   const REVERT_ERROR_IF_CONTRACT_INITIALIZATION_IS_INVALID = "InvalidInitialization";
 
@@ -82,7 +82,7 @@ describe("YieldStreamerHarness", function() {
   };
 
   // Get the signer representing the test user before the tests run
-  before(async function() {
+  before(async () => {
     [deployer] = await ethers.getSigners();
 
     // Contract factories with the explicitly specified deployer account

@@ -1,9 +1,10 @@
 import { expect } from "chai";
-import { ethers, network, upgrades } from "hardhat";
+import { ethers, upgrades } from "hardhat";
 import { Contract } from "ethers";
-import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
-import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
-import { checkEquality } from "../test-utils/eth";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+import { checkEquality, connect } from "../test-utils/eth";
+import { setUpFixture } from "../test-utils/common";
 
 // Constants for rate calculations and time units
 const RATE_FACTOR = BigInt(1000000000000); // Factor used in yield rate calculations (10^12)
@@ -72,12 +73,13 @@ async function getYieldState(yieldStreamer: Contract, account: string): Promise<
 /**
  * Tests a schedule of deposit and withdraw actions against expected yield states.
  * @param user The signer representing the user performing actions.
+ * @param erc20Token The ERC20 token contract.
  * @param yieldStreamer The YieldStreamer contract instance.
  * @param actionItems The list of actions to perform in the test.
  * @param expectedYieldStates The expected yield states after each action.
  */
 async function testActionSchedule(
-  user: SignerWithAddress,
+  user: HardhatEthersSigner,
   erc20Token: Contract,
   yieldStreamer: Contract,
   actionItems: ActionItem[],
@@ -110,17 +112,17 @@ async function testActionSchedule(
     // Perform the deposit or withdraw action based on the action type
     if (actionItem.type === "deposit") {
       // Perform a deposit action
-      await erc20Token.connect(user).mint(user.address, actionItem.amount);
+      await connect(erc20Token, user).mint(user.address, actionItem.amount);
     } else if (actionItem.type === "withdraw") {
       // Perform a withdrawal action
-      await erc20Token.connect(user).burn(user.address, actionItem.amount);
+      await connect(erc20Token, user).burn(user.address, actionItem.amount);
     }
 
     // Fetch the actual yield state from the contract after the action
     const contractYieldState = await getYieldState(yieldStreamer, user.address);
 
     // Update the expected lastUpdateTimestamp with the adjusted block timestamp
-    const blockTimestamp = (await ethers.provider.getBlock("latest")).timestamp;
+    const blockTimestamp = (await ethers.provider.getBlock("latest"))?.timestamp ?? 0;
     expectedYieldStates[index].lastUpdateTimestamp = blockTimestamp - NEGATIVE_TIME_SHIFT;
 
     // Assert that the actual yield state matches the expected state
@@ -153,23 +155,8 @@ function calculateEffectiveDay(adjustedBlockTime: number, dayNumber: number): nu
   return Math.floor((adjustedBlockTime + dayNumber * DAY) / DAY);
 }
 
-/**
- * Sets up a fixture for deploying contracts, using Hardhat's snapshot functionality.
- * @param func The async function that deploys and sets up the contracts.
- * @returns The deployed contracts.
- */
-async function setUpFixture<T>(func: () => Promise<T>): Promise<T> {
-  if (network.name === "hardhat") {
-    // Use Hardhat's snapshot functionality for faster test execution
-    return loadFixture(func);
-  } else {
-    // Directly execute the function if not on Hardhat network
-    return func();
-  }
-}
-
-describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function() {
-  let user: SignerWithAddress;
+describe("YieldStreamer - Deposit/Withdraw Simulation Tests", async () => {
+  let user: HardhatEthersSigner;
   let adjustedBlockTime: number;
   const EXPECTED_VERSION: Version = {
     major: 2,
@@ -178,7 +165,7 @@ describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function() {
   };
 
   // Get the signer representing the test user and adjusted block time before the tests run
-  before(async function() {
+  before(async () => {
     [user] = await ethers.getSigners();
     adjustedBlockTime = await getAdjustedBlockTime();
   });
@@ -202,8 +189,8 @@ describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function() {
     return { erc20Token, yieldStreamer };
   }
 
-  describe("Function 'deposit()'", function() {
-    it("Should correctly update state for Deposit Schedule 1", async function() {
+  describe("Function 'deposit()'", async () => {
+    it("Should correctly update state for Deposit Schedule 1", async () => {
       const { erc20Token, yieldStreamer } = await setUpFixture(deployContracts);
 
       // Simulated action schedule of deposits
@@ -470,7 +457,7 @@ describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function() {
     });
   });
 
-  describe("Function 'withdraw()'", function() {
+  describe("Function 'withdraw()'", async () => {
     it("Should correctly update state for Withdraw Schedule 1", async () => {
       const { erc20Token, yieldStreamer } = await setUpFixture(deployContracts);
 
