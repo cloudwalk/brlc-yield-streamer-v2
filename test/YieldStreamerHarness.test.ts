@@ -77,7 +77,7 @@ describe("YieldStreamerHarness", function () {
   const harnessAdminRole: string = ethers.id("HARNESS_ADMIN_ROLE");
   const EXPECTED_VERSION: Version = {
     major: 2,
-    minor: 0,
+    minor: 1,
     patch: 0
   };
 
