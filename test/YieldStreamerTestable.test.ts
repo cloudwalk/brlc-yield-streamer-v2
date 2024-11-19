@@ -1944,6 +1944,14 @@ describe("YieldStreamerTestable", async () => {
         toTimestamp: -1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
         expectedEndIndex: 1
+      },
+      {
+        description:
+          "`fromTimestamp` is exactly on the second rate effective day, `toTimestamp` is exactly on the third rate effective day",
+        fromTimestamp: 0n + secondRateEffectiveDay * DAY,
+        toTimestamp: 0n + thirdRateEffectiveDay * DAY,
+        expectedStartIndex: 1,
+        expectedEndIndex: 1
       }
     ];
 
