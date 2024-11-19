@@ -23,9 +23,7 @@ const config: HardhatUserConfig = {
         mnemonic: process.env.HARDHAT_MNEMONIC
       },
       allowUnlimitedContractSize:
-        process.env.ALLOW_UNLIMITED_CONTRACT_SIZE !== undefined
-          ? process.env.ALLOW_UNLIMITED_CONTRACT_SIZE === "true"
-          : true
+        process.env.ALLOW_UNLIMITED_CONTRACT_SIZE === "true",
     },
     ganache: {
       url: process.env.GANACHE_RPC,
