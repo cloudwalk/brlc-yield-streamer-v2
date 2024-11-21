@@ -263,6 +263,25 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
       expect(actualRates).to.deep.equal(expectedRates);
     });
 
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const itemIndex = 1;
+      const inputRateUpdated: InputYieldRate = { ...INPUT_YIELD_RATES[itemIndex] };
+      inputRateUpdated.effectiveDay = (INPUT_YIELD_RATES[0].effectiveDay + INPUT_YIELD_RATES[1].effectiveDay) / 2n;
+      inputRateUpdated.tierRates = INPUT_YIELD_RATES[0].tierRates;
+      inputRateUpdated.tierCaps = INPUT_YIELD_RATES[2].tierCaps;
+
+      await expect(
+        connect(yieldStreamer, user2).updateYieldRate(
+          GROUP_ID,
+          itemIndex,
+          inputRateUpdated.effectiveDay,
+          inputRateUpdated.tierRates,
+          inputRateUpdated.tierCaps
+        )
+      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+    });
+
     it("Is reverted if the provided rate object has an invalid effective day", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
       const inputRateUpdated: InputYieldRate = INPUT_YIELD_RATES[0];
@@ -394,6 +413,17 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
       expect(actualGroups).to.deep.equal([newGroup, newGroup]);
     });
 
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const accounts = [user1.address];
+      const forceYieldAccrue = false;
+      await proveTx(yieldStreamer.assignGroup(GROUP_ID, accounts, forceYieldAccrue));
+
+      await expect(
+        connect(yieldStreamer, user2).assignGroup(GROUP_ID, accounts, forceYieldAccrue)
+      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+    });
+
     it("Is reverted if group already assigned", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
       const accounts = [user1.address];
@@ -413,6 +443,16 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
       await expect(yieldStreamer.setFeeReceiver(feeReceiver))
         .to.emit(yieldStreamer, EVENT_NAME_FEE_RECEIVER_CHANGED)
         .withArgs(feeReceiver, ethers.ZeroAddress);
+
+      expect(await yieldStreamer.feeReceiver()).to.be.equal(feeReceiver);
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      await expect(
+        connect(yieldStreamer, user2).setFeeReceiver(feeReceiver)
+      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Is revert if provided receiver is the same as current", async () => {
@@ -431,7 +471,7 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
       const currentBlockTimestamp = await getLatestBlockTimestamp();
 
-      expect(await yieldStreamer.blockTimestamp()).to.equal(
+      expect(await yieldStreamer.blockTimestamp()).to.be.equal(
         currentBlockTimestamp - NEGATIVE_TIME_SHIFT
       );
     });

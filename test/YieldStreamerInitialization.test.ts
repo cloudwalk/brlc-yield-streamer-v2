@@ -3,7 +3,7 @@ import { ethers, network, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import { getAddress, proveTx } from "../test-utils/eth";
+import { connect, getAddress, proveTx } from "../test-utils/eth";
 import { setUpFixture } from "../test-utils/common";
 
 interface Fixture {
@@ -24,6 +24,7 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
   const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_ALREADY_CONFIGURED = "YieldStreamer_SourceYieldStreamerAlreadyConfigured";
   const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED = "YieldStreamer_SourceYieldStreamerGroupAlreadyMapped";
   const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_UNAUTHORIZED_BLOCKLISTER = "YieldStreamer_SourceYieldStreamerUnauthorizedBlocklister";
+  const REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT = "AccessControlUnauthorizedAccount";
 
   let yieldStreamerInitializationFactory: ContractFactory;
   let user1: HardhatEthersSigner;
@@ -73,6 +74,16 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
         yieldStreamerInitialization.initializeAccounts(accounts)
       )
         .to.emit(yieldStreamerInitialization, EVENT_NAME_ACCOUNT_INITIALIZED);
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
+      const accounts = [user1.address, user2.address];
+
+
+      await expect(
+        connect(yieldStreamerInitialization, user2).initializeAccounts(accounts)
+      ).revertedWithCustomError(yieldStreamerInitialization, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Is reverted if accounts array is empty", async () => {
@@ -138,6 +149,16 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
         yieldStreamerInitialization.setSourceYieldStreamer(user1.address)
       )
         .to.emit(yieldStreamerInitialization, EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED);
+
+      expect(await yieldStreamerInitialization.sourceYieldStreamer()).to.be.equal(user1.address);
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
+
+      await expect(
+        connect(yieldStreamerInitialization, user2).setSourceYieldStreamer(user1.address)
+      ).revertedWithCustomError(yieldStreamerInitialization, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Revert if new source yield streamer is the same", async () => {
@@ -164,7 +185,15 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
         .to.emit(yieldStreamerInitialization, EVENT_NAME_GROUP_MAPPED);
     });
 
-    it("Executes as expected", async () => {
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
+
+      await expect(
+        connect(yieldStreamerInitialization, user2).mapSourceYieldStreamerGroup(ethers.ZeroHash, 1)
+      ).revertedWithCustomError(yieldStreamerInitialization, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+    });
+
+    it("Is reverted if source yield streamer group already mapped", async () => {
       const { yieldStreamerInitialization } = await setUpFixture(deployContracts);
       await proveTx(yieldStreamerInitialization.mapSourceYieldStreamerGroup(ethers.ZeroHash, 1));
       await expect(
@@ -197,6 +226,14 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
         yieldStreamerInitialization.setInitializedFlag(user1.address, false)
       )
         .to.not.emit(yieldStreamerInitialization, EVENT_NAME_INITIALIZED_FLAG_SET);
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
+
+      await expect(
+        connect(yieldStreamerInitialization, user2).setInitializedFlag(user1.address, true)
+      ).revertedWithCustomError(yieldStreamerInitialization, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
   });
 
