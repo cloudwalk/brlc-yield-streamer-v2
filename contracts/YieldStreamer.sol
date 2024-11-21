@@ -57,19 +57,19 @@ contract YieldStreamer is
      * @dev Initializes the upgradable contract with the specified underlying token.
      * This function should be called only once during deployment.
      *
-     * @param underlyingToken The address of the underlying ERC20 token contract.
+     * @param token_ The address of the underlying ERC20 token contract.
      */
-    function initialize(address underlyingToken) external initializer {
-        __YieldStreamer_init(underlyingToken);
+    function initialize(address token_) external initializer {
+        __YieldStreamer_init(token_);
     }
 
     /**
      * @dev Internal initializer function for the upgradable contract.
      * Calls the initializers of all parent contracts.
      *
-     * @param underlyingToken The address of the underlying ERC20 token contract.
+     * @param token_ The address of the underlying ERC20 token contract.
      */
-    function __YieldStreamer_init(address underlyingToken) internal onlyInitializing {
+    function __YieldStreamer_init(address token_) internal onlyInitializing {
         __Context_init_unchained();
         __ERC165_init_unchained();
         __AccessControl_init_unchained();
@@ -79,21 +79,21 @@ contract YieldStreamer is
         __Rescuable_init_unchained(OWNER_ROLE);
         __UUPSUpgradeable_init_unchained();
 
-        __YieldStreamer_init_init_unchained(underlyingToken);
+        __YieldStreamer_init_init_unchained(token_);
     }
 
     /**
      * @dev Unchained internal initializer function for setting up the underlying token.
      * Assigns roles and sets the underlying token address.
      *
-     * @param underlyingToken The address of the underlying ERC20 token contract.
+     * @param token_ The address of the underlying ERC20 token contract.
      */
-    function __YieldStreamer_init_init_unchained(address underlyingToken) internal onlyInitializing {
-        if (underlyingToken == address(0)) {
+    function __YieldStreamer_init_init_unchained(address token_) internal onlyInitializing {
+        if (token_ == address(0)) {
             revert YieldStreamer_TokenAddressZero();
         }
 
-        _yieldStreamerStorage().underlyingToken = underlyingToken;
+        _yieldStreamerStorage().underlyingToken = token_;
 
         _setRoleAdmin(OWNER_ROLE, OWNER_ROLE);
         _setRoleAdmin(ADMIN_ROLE, OWNER_ROLE);
@@ -222,8 +222,8 @@ contract YieldStreamer is
     /**
      * @inheritdoc IYieldStreamerInitialization_Functions
      */
-    function setSourceYieldStreamer(address sourceYieldStreamer) external onlyRole(OWNER_ROLE) {
-        _setSourceYieldStreamer(sourceYieldStreamer);
+    function setSourceYieldStreamer(address sourceYieldStreamer_) external onlyRole(OWNER_ROLE) {
+        _setSourceYieldStreamer(sourceYieldStreamer_);
     }
 
     /**

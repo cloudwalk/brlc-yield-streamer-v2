@@ -15,9 +15,9 @@ contract YieldStreamerTestable is YieldStreamer {
     function getAccruePreview(
         YieldState memory state,
         YieldRate[] memory rates,
-        uint256 currentTimestamp
+        uint256 timestamp
     ) external pure returns (AccruePreview memory) {
-        return _getAccruePreview(state, rates, currentTimestamp);
+        return _getAccruePreview(state, rates, timestamp);
     }
 
     function calculateYield(
@@ -89,6 +89,6 @@ contract YieldStreamerTestable is YieldStreamer {
     }
 
     function map(AccruePreview memory accrue) external pure returns (ClaimPreview memory) {
-        return _map(accrue);
+        return _convertPreview(accrue);
     }
 }

@@ -105,9 +105,9 @@ interface IYieldStreamerInitialization_Functions {
 
     /**
      * @dev Sets the source yield streamer.
-     * @param sourceYieldStreamer The source yield streamer to set.
+     * @param sourceYieldStreamer_ The source yield streamer to set.
      */
-    function setSourceYieldStreamer(address sourceYieldStreamer) external;
+    function setSourceYieldStreamer(address sourceYieldStreamer_) external;
 
     /**
      * @dev Maps a source yield streamer group.

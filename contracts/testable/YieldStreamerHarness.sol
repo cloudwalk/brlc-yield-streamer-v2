@@ -125,7 +125,7 @@ contract YieldStreamerHarness is YieldStreamer {
      *
      * @return A `YieldStreamerHarnessLayout` struct containing the current harness storage state.
      */
-    function getHarnessStorageLayout() external view returns (YieldStreamerHarnessLayout memory) {
+    function getHarnessStorageLayout() external pure returns (YieldStreamerHarnessLayout memory) {
         return _yieldStreamerHarnessStorage();
     }
 
