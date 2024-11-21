@@ -119,8 +119,8 @@ contract YieldStreamer is
     /**
      * @inheritdoc IYieldStreamerPrimary_Functions
      */
-    function getClaimPreview(address account) external view returns (ClaimPreview memory) {
-        return _getClaimPreview(account, _blockTimestamp());
+    function getClaimPreview(address account, bool round) external view returns (ClaimPreview memory) {
+        return _getClaimPreview(account, _blockTimestamp(), round);
     }
 
     /**
