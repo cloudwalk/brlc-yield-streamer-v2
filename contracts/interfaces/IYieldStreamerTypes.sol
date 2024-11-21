@@ -84,7 +84,7 @@ interface IYieldStreamerTypes {
      * Used to estimate the yield that can be claimed without modifying the contract state.
      *
      * Fields:
-     * - `yield`: The total claimable yield amount (rounded down) available for the account.
+     * - `yield`: The total claimable yield amount available for the account.
      * - `fee`: The fee amount that would be deducted during the claim.
      * - `timestamp`: The timestamp at which the preview was calculated.
      * - `balance`: The account's token balance used in the calculation.
