@@ -2,22 +2,57 @@ import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import { getAddress, getLatestBlockTimestamp, proveTx } from "../test-utils/eth";
-import { setUpFixture } from "../test-utils/common";
-import { connect } from "../test-utils/eth";
+import { connect, getAddress, getLatestBlockTimestamp, proveTx } from "../test-utils/eth";
+import { maxUintForBits, setUpFixture } from "../test-utils/common";
+import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 
 // Constants for rate calculations and time units
 const HOUR = 60 * 60; // Number of seconds in an hour
 const NEGATIVE_TIME_SHIFT = 3 * HOUR; // Negative time shift in seconds (3 hours)
 
+interface RateTier {
+  rate: bigint;
+  cap: bigint;
+}
+
+interface YieldRate {
+  tiers: RateTier[];
+  effectiveDay: bigint;
+}
+
 // Interface representing a yield rate change in the contract
-interface YieldTieredRate {
-  effectiveDay: number; // Day when the yield rate becomes effective
+interface InputYieldRate {
+  effectiveDay: bigint; // Day when the yield rate becomes effective
   tierRates: bigint[]; // Array of yield rate value for each tier (expressed in RATE_FACTOR units)
   tierCaps: bigint[]; // Array of balance cap for each tier
 }
 
-describe("Contract 'YieldStreamer', the configuration part", function () {
+function normalizeYieldRate(rate: YieldRate): YieldRate {
+  return {
+    effectiveDay: rate.effectiveDay,
+    tiers: rate.tiers.map((tier: RateTier) => ({
+      rate: tier.rate,
+      cap: tier.cap
+    }))
+  };
+}
+
+function convertYieldRate(inputYieldRate: InputYieldRate): YieldRate {
+  const rateTiers: RateTier[] = [];
+  for (let i = 0; i < inputYieldRate.tierRates.length; ++i) {
+    const rateTier: RateTier = {
+      rate: inputYieldRate.tierRates[i],
+      cap: inputYieldRate.tierCaps[i]
+    };
+    rateTiers.push(rateTier);
+  }
+  return {
+    tiers: rateTiers,
+    effectiveDay: inputYieldRate.effectiveDay
+  };
+}
+
+describe("Contract 'YieldStreamer', the configuration part", async () => {
   const EVENT_NAME_GROUP_ASSIGNED = "YieldStreamer_GroupAssigned";
   const EVENT_NAME_YIELD_RATE_ADDED = "YieldStreamer_YieldRateAdded";
   const EVENT_NAME_YIELD_RATE_UPDATED = "YieldStreamer_YieldRateUpdated";
@@ -31,27 +66,25 @@ describe("Contract 'YieldStreamer', the configuration part", function () {
   const REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT = "AccessControlUnauthorizedAccount";
 
   const GROUP_ID = 4294967295n;
-  const TEST_GROUP_ID = 1;
-  const ITEM_INDEX = 0;
-  const INCORRECT_ITEM_INDEX = 3;
   const EFFECTIVE_DAY_NON_ZERO = 1;
-  const YIELD_RATES: YieldTieredRate[] = [
+  const INPUT_YIELD_RATES: InputYieldRate[] = [
     {
-      effectiveDay: 0, // min uint16
+      effectiveDay: 0n, // min uint16
       tierRates: [0n, 0n], // min uint48
       tierCaps: [100n, 0n] // min uint64
     },
     {
-      effectiveDay: 32767, // middle int16
-      tierRates: [140737488355327n, 140737488355327n], // middle uint48
-      tierCaps: [9223372036854775807n, 9223372036854775807n] // middle uint64
+      effectiveDay: maxUintForBits(15), // middle uint16
+      tierRates: [maxUintForBits(47), maxUintForBits(47)], // middle uint48
+      tierCaps: [maxUintForBits(63), maxUintForBits(63)] // middle uint64
     },
     {
-      effectiveDay: 65535, // max uint16
-      tierRates: [281474976710655n, 281474976710655n], // max uint48
-      tierCaps: [18446744073709551615n, 18446744073709551615n] // max uint64
+      effectiveDay: maxUintForBits(16), // max uint16
+      tierRates: [maxUintForBits(48), maxUintForBits(48)], // max uint48
+      tierCaps: [maxUintForBits(64), maxUintForBits(64)] // max uint64
     }
   ];
+  const YIELD_RATES: YieldRate[] = INPUT_YIELD_RATES.map(convertYieldRate);
 
   let yieldStreamerConfigurationFactory: ContractFactory;
   let feeReceiver: HardhatEthersSigner;
@@ -72,76 +105,119 @@ describe("Contract 'YieldStreamer', the configuration part", function () {
     const tokenMock = await tokenMockFactory.deploy("Mock Token", "MTK");
     await tokenMock.waitForDeployment();
 
-    const yieldStreamer: Contract = await upgrades.deployProxy(yieldStreamerConfigurationFactory, [getAddress(tokenMock)]);
+    const yieldStreamer: Contract = await upgrades.deployProxy(
+      yieldStreamerConfigurationFactory,
+      [getAddress(tokenMock)]
+    );
     await yieldStreamer.waitForDeployment();
 
     return { yieldStreamer };
   }
 
+  async function addYieldRates(yieldStreamer: Contract, yieldRates: InputYieldRate[], groupId: bigint = GROUP_ID) {
+    for (const yieldRate of yieldRates) {
+      await proveTx(yieldStreamer.addYieldRate(
+        groupId,
+        yieldRate.effectiveDay,
+        yieldRate.tierRates,
+        yieldRate.tierCaps
+      ));
+    }
+  }
+
   async function deployAndConfigureContracts(): Promise<{ yieldStreamer: Contract }> {
     const { yieldStreamer } = await deployContracts();
-
-    for (const rate of YIELD_RATES) {
-      await proveTx(
-        yieldStreamer.addYieldRate(
-          GROUP_ID,
-          rate.effectiveDay,
-          rate.tierRates,
-          rate.tierCaps
-        )
-      );
-    }
-
+    await addYieldRates(yieldStreamer, INPUT_YIELD_RATES);
     return { yieldStreamer };
+  }
+
+  async function getGroupsForAccounts(contract: Contract, accountAddresses: string[]): Promise<bigint[]> {
+    const actualGroups: bigint[] = [];
+    for (const accountAddress of accountAddresses) {
+      actualGroups.push(await contract.getAccountGroup(accountAddress));
+    }
+    return actualGroups;
   }
 
   describe("Function 'addYieldRate()'", async () => {
     it("Executes as expected", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
 
+      // Add first yield rate with the zero effective day
       await expect(
         yieldStreamer.addYieldRate(
           GROUP_ID,
-          YIELD_RATES[0].effectiveDay,
-          YIELD_RATES[0].tierRates,
-          YIELD_RATES[0].tierCaps
+          INPUT_YIELD_RATES[0].effectiveDay,
+          INPUT_YIELD_RATES[0].tierRates,
+          INPUT_YIELD_RATES[0].tierCaps
         )
-      )
-        .to.emit(yieldStreamer, EVENT_NAME_YIELD_RATE_ADDED)
-        .withArgs(GROUP_ID, YIELD_RATES[0].effectiveDay, YIELD_RATES[0].tierRates, YIELD_RATES[0].tierCaps);
+      ).to.emit(
+        yieldStreamer,
+        EVENT_NAME_YIELD_RATE_ADDED
+      ).withArgs(
+        GROUP_ID,
+        INPUT_YIELD_RATES[0].effectiveDay,
+        INPUT_YIELD_RATES[0].tierRates,
+        INPUT_YIELD_RATES[0].tierCaps
+      );
+      const actualRates1: YieldRate[] = (await yieldStreamer.getGroupYieldRates(GROUP_ID)).map(normalizeYieldRate);
+      const expectedRates1: YieldRate[] = [YIELD_RATES[0]];
+      expect(actualRates1).to.deep.equal(expectedRates1);
+
+      // Add second yield rate with a non-zero effective day
+      await expect(
+        yieldStreamer.addYieldRate(
+          GROUP_ID,
+          INPUT_YIELD_RATES[1].effectiveDay,
+          INPUT_YIELD_RATES[1].tierRates,
+          INPUT_YIELD_RATES[1].tierCaps
+        )
+      ).to.emit(
+        yieldStreamer,
+        EVENT_NAME_YIELD_RATE_ADDED
+      ).withArgs(
+        GROUP_ID,
+        INPUT_YIELD_RATES[1].effectiveDay,
+        INPUT_YIELD_RATES[1].tierRates,
+        INPUT_YIELD_RATES[1].tierCaps
+      );
+      const actualRates2: YieldRate[] = (await yieldStreamer.getGroupYieldRates(GROUP_ID)).map(normalizeYieldRate);
+      const expectedRates2 = [YIELD_RATES[0], YIELD_RATES[1]];
+      expect(actualRates2).to.deep.equal(expectedRates2);
     });
 
-    it("Is reverted if the first added rate object has the zero effective day", async () => {
+    it("Is reverted if the first added rate object has a non-zero effective day", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
 
       await expect(
         yieldStreamer.addYieldRate(
           GROUP_ID,
           EFFECTIVE_DAY_NON_ZERO,
-          YIELD_RATES[0].tierRates,
-          YIELD_RATES[0].tierCaps
+          INPUT_YIELD_RATES[0].tierRates,
+          INPUT_YIELD_RATES[0].tierCaps
         )
       ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_YIELD_RATE_INVALID_EFFECTIVE_DATE);
     });
 
-    it("Is reverted if the provided yield rate has effective day less than in the previous yield rate", async () => {
-      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const yieldRate = YIELD_RATES[2];
-      yieldRate.effectiveDay = yieldRate.effectiveDay - 1;
+    it("Is reverted if the new eff. day is not greater than the eff. day of the previous rate object", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      await addYieldRates(yieldStreamer, [INPUT_YIELD_RATES[0], INPUT_YIELD_RATES[1]]);
+      const newYieldRate: InputYieldRate = { ...INPUT_YIELD_RATES[1] };
+      newYieldRate.effectiveDay = INPUT_YIELD_RATES[1].effectiveDay;
 
       await expect(
         yieldStreamer.addYieldRate(
           GROUP_ID,
-          yieldRate.effectiveDay,
-          yieldRate.tierRates,
-          yieldRate.tierCaps
+          newYieldRate.effectiveDay,
+          newYieldRate.tierRates,
+          newYieldRate.tierCaps
         )
       ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_YIELD_RATE_INVALID_EFFECTIVE_DATE);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
-      const yieldRate = YIELD_RATES[0];
+      const yieldRate = INPUT_YIELD_RATES[0];
 
       await expect(
         connect(yieldStreamer, user2).addYieldRate(
@@ -157,125 +233,106 @@ describe("Contract 'YieldStreamer', the configuration part", function () {
   describe("Function 'updateYieldRate()'", async () => {
     it("Executes as expected", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const yieldRateUpdated: YieldTieredRate = YIELD_RATES[0];
+      const itemIndex = 1;
+      const inputRateUpdated: InputYieldRate = { ...INPUT_YIELD_RATES[itemIndex] };
+      inputRateUpdated.effectiveDay = (INPUT_YIELD_RATES[0].effectiveDay + INPUT_YIELD_RATES[1].effectiveDay) / 2n;
+      inputRateUpdated.tierRates = INPUT_YIELD_RATES[0].tierRates;
+      inputRateUpdated.tierCaps = INPUT_YIELD_RATES[2].tierCaps;
 
       await expect(
         yieldStreamer.updateYieldRate(
           GROUP_ID,
-          ITEM_INDEX,
-          yieldRateUpdated.effectiveDay,
-          yieldRateUpdated.tierRates,
-          yieldRateUpdated.tierCaps
+          itemIndex,
+          inputRateUpdated.effectiveDay,
+          inputRateUpdated.tierRates,
+          inputRateUpdated.tierCaps
         )
-      )
-        .to.emit(yieldStreamer, EVENT_NAME_YIELD_RATE_UPDATED)
-        .withArgs(
-          GROUP_ID,
-          ITEM_INDEX,
-          yieldRateUpdated.effectiveDay,
-          yieldRateUpdated.tierRates,
-          yieldRateUpdated.tierCaps
-        );
-    });
-
-    it("Executes as expected if only one yield rate presents", async () => {
-      const { yieldStreamer } = await deployContracts(); // using setUpFixture(deployContracts) broke next tests
-      const yieldRateUpdated: YieldTieredRate = YIELD_RATES[0];
-
-      await proveTx(
-        yieldStreamer.addYieldRate(
-          GROUP_ID,
-          yieldRateUpdated.effectiveDay,
-          yieldRateUpdated.tierRates,
-          yieldRateUpdated.tierCaps
-        )
+      ).to.emit(
+        yieldStreamer,
+        EVENT_NAME_YIELD_RATE_UPDATED
+      ).withArgs(
+        GROUP_ID,
+        itemIndex,
+        inputRateUpdated.effectiveDay,
+        inputRateUpdated.tierRates,
+        inputRateUpdated.tierCaps
       );
-
-      await expect(
-        yieldStreamer.updateYieldRate(
-          GROUP_ID,
-          ITEM_INDEX,
-          yieldRateUpdated.effectiveDay,
-          yieldRateUpdated.tierRates,
-          yieldRateUpdated.tierCaps
-        )
-      )
-        .to.emit(yieldStreamer, EVENT_NAME_YIELD_RATE_UPDATED)
-        .withArgs(
-          GROUP_ID,
-          ITEM_INDEX,
-          yieldRateUpdated.effectiveDay,
-          yieldRateUpdated.tierRates,
-          yieldRateUpdated.tierCaps
-        );
+      const actualRates: YieldRate[] = (await yieldStreamer.getGroupYieldRates(GROUP_ID)).map(normalizeYieldRate);
+      const storedRateUpdated = convertYieldRate(inputRateUpdated);
+      const expectedRates: YieldRate[] = [YIELD_RATES[0], storedRateUpdated, YIELD_RATES[2]];
+      expect(actualRates).to.deep.equal(expectedRates);
     });
 
-    it("Is reverted if the yield rate has invalid effective day", async () => {
+    it("Is reverted if the provided rate object has an invalid effective day", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const yieldRateUpdated: YieldTieredRate = YIELD_RATES[0];
+      const inputRateUpdated: InputYieldRate = INPUT_YIELD_RATES[0];
+      const itemIndex = 0;
 
       await expect(
         yieldStreamer.updateYieldRate(
           GROUP_ID,
-          ITEM_INDEX,
+          itemIndex,
           EFFECTIVE_DAY_NON_ZERO,
-          yieldRateUpdated.tierRates,
-          yieldRateUpdated.tierCaps
+          inputRateUpdated.tierRates,
+          inputRateUpdated.tierCaps
         )
       ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_YIELD_RATE_INVALID_EFFECTIVE_DATE);
     });
 
-    it("Is reverted if the provided item index is incorrect", async () => {
+    it("Is reverted if the provided item index is invalid", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const yieldRateUpdated: YieldTieredRate = YIELD_RATES[2];
+      const inputRateUpdated: InputYieldRate = INPUT_YIELD_RATES[2];
+      const invalidItemIndex = INPUT_YIELD_RATES.length;
 
       await expect(
         yieldStreamer.updateYieldRate(
           GROUP_ID,
-          INCORRECT_ITEM_INDEX,
-          yieldRateUpdated.effectiveDay,
-          yieldRateUpdated.tierRates,
-          yieldRateUpdated.tierCaps
+          invalidItemIndex,
+          inputRateUpdated.effectiveDay,
+          inputRateUpdated.tierRates,
+          inputRateUpdated.tierCaps
         )
       ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_YIELD_RATE_INVALID_ITEM_INDEX);
     });
 
     it("Is reverted if the provided effective day is invalid", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      let itemIndex = 1;
 
       await expect(
         yieldStreamer.updateYieldRate(
           GROUP_ID,
-          1,
-          YIELD_RATES[1].effectiveDay - 32767,
-          YIELD_RATES[1].tierRates,
-          YIELD_RATES[1].tierCaps
+          itemIndex,
+          INPUT_YIELD_RATES[itemIndex - 1].effectiveDay,
+          INPUT_YIELD_RATES[itemIndex].tierRates,
+          INPUT_YIELD_RATES[itemIndex].tierCaps
         )
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_YIELD_RATE_INVALID_EFFECTIVE_DATE);
 
       await expect(
         yieldStreamer.updateYieldRate(
           GROUP_ID,
-          1,
-          YIELD_RATES[1].effectiveDay + 32767,
-          YIELD_RATES[1].tierRates,
-          YIELD_RATES[1].tierCaps
+          itemIndex,
+          INPUT_YIELD_RATES[itemIndex + 1].effectiveDay,
+          INPUT_YIELD_RATES[itemIndex].tierRates,
+          INPUT_YIELD_RATES[itemIndex].tierCaps
         )
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_YIELD_RATE_INVALID_EFFECTIVE_DATE);
 
+      itemIndex = 2;
       await expect(
         yieldStreamer.updateYieldRate(
           GROUP_ID,
-          2,
-          YIELD_RATES[2].effectiveDay - 32767,
-          YIELD_RATES[2].tierRates,
-          YIELD_RATES[2].tierCaps
+          itemIndex,
+          INPUT_YIELD_RATES[itemIndex - 1].effectiveDay,
+          INPUT_YIELD_RATES[itemIndex].tierRates,
+          INPUT_YIELD_RATES[itemIndex].tierCaps
         )
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_YIELD_RATE_INVALID_EFFECTIVE_DATE);
     });
   });
 
-  //_assignSingleAccountToGroup - NOT USING at all
+  // _assignSingleAccountToGroup - NOT USING at all
   //
   // describe("Function '_assignSingleAccountToGroup() ----- '", async () => {
   //   it("Executes as expected", async () => {
@@ -297,36 +354,59 @@ describe("Contract 'YieldStreamer', the configuration part", function () {
 
   describe("Function 'assignGroup()'", async () => {
     it("Executes as expected", async () => {
-      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const accounts = [user1.address];
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      await addYieldRates(yieldStreamer, [INPUT_YIELD_RATES[0]], GROUP_ID);
+      await addYieldRates(yieldStreamer, [INPUT_YIELD_RATES[0]], 0n);
+
+      let accounts = [user1.address];
       let forceYieldAccrue = false;
 
-      await expect(
-        yieldStreamer.assignGroup(GROUP_ID, accounts, forceYieldAccrue)
-      )
-        .and.to.emit(yieldStreamer, EVENT_NAME_GROUP_ASSIGNED)
-        .withArgs(user1.address, GROUP_ID, 0)
-        .to.not.emit(yieldStreamer, EVENT_NAME_YIELD_ACCRUED);
+      let tx = yieldStreamer.assignGroup(GROUP_ID, accounts, forceYieldAccrue);
 
-      forceYieldAccrue = true;
-      await expect(yieldStreamer.assignGroup(TEST_GROUP_ID, accounts, forceYieldAccrue))
+      await expect(tx)
         .to.emit(yieldStreamer, EVENT_NAME_GROUP_ASSIGNED)
-        .withArgs(user1.address, TEST_GROUP_ID, GROUP_ID);
+        .withArgs(user1.address, GROUP_ID, 0n);
+      await expect(tx).not.to.emit(yieldStreamer, EVENT_NAME_YIELD_ACCRUED);
+
+      let actualGroups = await getGroupsForAccounts(yieldStreamer, accounts);
+      expect(actualGroups).to.deep.equal([GROUP_ID]);
+
+      const newGroup = GROUP_ID - 1n;
+      accounts = [user1.address, user2.address];
+      forceYieldAccrue = true;
+
+      tx = yieldStreamer.assignGroup(newGroup, accounts, forceYieldAccrue);
+
+      await expect(tx)
+        .to.emit(yieldStreamer, EVENT_NAME_GROUP_ASSIGNED)
+        .withArgs(accounts[0], newGroup, GROUP_ID);
+      await expect(tx)
+        .to.emit(yieldStreamer, EVENT_NAME_GROUP_ASSIGNED)
+        .withArgs(accounts[1], newGroup, 0n);
+      await expect(tx)
+        .to.emit(yieldStreamer, EVENT_NAME_YIELD_ACCRUED)
+        .withArgs(accounts[0], anyValue, anyValue, anyValue, anyValue);
+      await expect(tx)
+        .to.emit(yieldStreamer, EVENT_NAME_YIELD_ACCRUED)
+        .withArgs(accounts[1], anyValue, anyValue, anyValue, anyValue);
+
+      actualGroups = await getGroupsForAccounts(yieldStreamer, accounts);
+      expect(actualGroups).to.deep.equal([newGroup, newGroup]);
     });
 
     it("Is reverted if group already assigned", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
       const accounts = [user1.address];
       const forceYieldAccrue = false;
-      await proveTx(yieldStreamer.assignGroup(TEST_GROUP_ID, accounts, forceYieldAccrue));
+      await proveTx(yieldStreamer.assignGroup(GROUP_ID, accounts, forceYieldAccrue));
 
-      await expect(yieldStreamer.assignGroup(TEST_GROUP_ID, accounts, forceYieldAccrue))
+      await expect(yieldStreamer.assignGroup(GROUP_ID, accounts, forceYieldAccrue))
         .to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_GROUP_ALREADY_ASSIGNED)
         .withArgs(user1.address);
     });
   });
 
-  describe("Function 'setFeeReceiver - _setFeeReceiver ()'", async () => {
+  describe("Function 'setFeeReceiver()'", async () => {
     it("Executes as expected", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
 
@@ -345,6 +425,7 @@ describe("Contract 'YieldStreamer', the configuration part", function () {
       );
     });
   });
+
   describe("Function 'blockTimestamp'", async () => {
     it("Executes as expected", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
