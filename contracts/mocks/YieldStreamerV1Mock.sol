@@ -17,6 +17,7 @@ contract YieldStreamerV1Mock is IYieldStreamerV1 {
 
     mapping(address => ClaimResult) private _claimAllPreview;
     mapping(address => bool) private _isBlocklister;
+    bool blocklisterStatus = true;
 
     // ------------------ IYieldStreamerV1 ------------------------ //
 
@@ -39,7 +40,7 @@ contract YieldStreamerV1Mock is IYieldStreamerV1 {
      */
     function isBlocklister(address account) external view returns (bool) {
         //revert YieldStreamerV1Mock_NotImplemented();
-        return true;
+        return blocklisterStatus;
     }
 
     /**
@@ -68,5 +69,9 @@ contract YieldStreamerV1Mock is IYieldStreamerV1 {
      */
     function setBlocklister(address account, bool isBlocklister_) external {
         _isBlocklister[account] = isBlocklister_;
+    }
+
+    function setBlocklisterStatus(bool status) external {
+        blocklisterStatus = status;
     }
 }

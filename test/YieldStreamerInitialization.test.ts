@@ -1,14 +1,32 @@
 import { expect } from "chai";
-import { ethers, network, upgrades } from "hardhat";
+import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import { connect, getAddress, proveTx } from "../test-utils/eth";
+import { connect, getAddress, getBlockTimestamp, proveTx } from "../test-utils/eth";
 import { setUpFixture } from "../test-utils/common";
+import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
+
+const HOUR = 60 * 60; // Number of seconds in an hour
+const NEGATIVE_TIME_SHIFT = 3 * HOUR; // Negative time shift in seconds (3 hours)
+const ZERO_ADDRESS = ethers.ZeroAddress;
+const ZERO_HASH = ethers.ZeroHash;
 
 interface Fixture {
   yieldStreamerInitialization: Contract;
   yieldStreamerV1: Contract;
+}
+
+interface ClaimResult {
+  nextClaimDay: bigint;
+  nextClaimDebit: bigint;
+  firstYieldDay: bigint;
+  prevClaimDebit: bigint;
+  primaryYield: bigint;
+  streamYield: bigint;
+  lastDayPartialYield: bigint;
+  shortfall: bigint;
+  fee: bigint;
+  yield: bigint;
 }
 
 describe("Contract 'YieldStreamer', the initialization part", function () {
@@ -35,7 +53,7 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
     [user1, user2] = await ethers.getSigners();
 
     // Contract factories with the explicitly specified deployer account
-    yieldStreamerInitializationFactory = await ethers.getContractFactory("YieldStreamer");
+    yieldStreamerInitializationFactory = await ethers.getContractFactory("YieldStreamerMock");
   });
 
   async function deployContracts(): Promise<Fixture> {
@@ -67,13 +85,50 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
 
   describe("Function 'initializeAccounts()'", async () => {
     it("Executes as expected", async () => {
-      const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
+      const { yieldStreamerInitialization, yieldStreamerV1 } = await setUpFixture(deployAndConfigureContracts);
       const accounts = [user1.address, user2.address];
+
+      const claimPreviewResult: ClaimResult = {
+        nextClaimDay: 1n,
+        nextClaimDebit: 2n,
+        firstYieldDay: 3n,
+        prevClaimDebit: 4n,
+        primaryYield: 5n,
+        streamYield: 6n,
+        lastDayPartialYield: 7n,
+        shortfall: 8n,
+        fee: 9n,
+        yield: 10n
+      };
+
+      const expectedBlockTimestamp = (await getBlockTimestamp("latest")) - NEGATIVE_TIME_SHIFT;
+      const expectedYieldState =
+        [
+          1n,
+          0n,
+          claimPreviewResult.primaryYield + claimPreviewResult.lastDayPartialYield,
+          expectedBlockTimestamp,
+          0n
+        ];
+
+      expect(await yieldStreamerInitialization.getYieldState(user1.address))
+        .to.be.deep.equal([0n, 0n, 0n, 0n, 0n]);
+      expect(await yieldStreamerInitialization.getYieldState(user2.address))
+        .to.be.deep.equal([0n, 0n, 0n, 0n, 0n]);
+
+      await proveTx(yieldStreamerV1.setClaimAllPreview(user1.address, claimPreviewResult));
+      await proveTx(yieldStreamerV1.setClaimAllPreview(user2.address, claimPreviewResult));
 
       await expect(
         yieldStreamerInitialization.initializeAccounts(accounts)
       )
-        .to.emit(yieldStreamerInitialization, EVENT_NAME_ACCOUNT_INITIALIZED);
+        .to.emit(yieldStreamerInitialization, EVENT_NAME_ACCOUNT_INITIALIZED)
+        .withArgs(user1.address, anyValue, anyValue, anyValue, anyValue)
+        .to.emit(yieldStreamerInitialization, EVENT_NAME_ACCOUNT_INITIALIZED)
+        .withArgs(user2.address, anyValue, anyValue, anyValue, anyValue);
+
+      expect(await yieldStreamerInitialization.getYieldState(user1.address)).to.be.deep.equal(expectedYieldState);
+      expect(yieldStreamerInitialization.getYieldState(user2.address)).to.be.deep.equal(expectedYieldState);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
@@ -135,7 +190,7 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
       const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
 
       await expect(
-        yieldStreamerInitialization.initializeAccounts([ethers.ZeroAddress])
+        yieldStreamerInitialization.initializeAccounts([ZERO_ADDRESS])
       )
         .to.be.revertedWithCustomError(yieldStreamerInitialization, REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED);
     });
@@ -177,27 +232,30 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
 
   describe("Function 'mapSourceYieldStreamerGroup()'", async () => {
     it("Executes as expected", async () => {
-      const { yieldStreamerInitialization } = await setUpFixture(deployContracts);
+      const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
+      const GROUP_ID = 4294967295n;
 
       await expect(
-        yieldStreamerInitialization.mapSourceYieldStreamerGroup(ethers.ZeroHash, 1)
+        yieldStreamerInitialization.mapSourceYieldStreamerGroup(ZERO_HASH, GROUP_ID)
       )
         .to.emit(yieldStreamerInitialization, EVENT_NAME_GROUP_MAPPED);
+
+      expect(await yieldStreamerInitialization.getGroupId(ZERO_HASH)).to.be.equal(GROUP_ID);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
       const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
 
       await expect(
-        connect(yieldStreamerInitialization, user2).mapSourceYieldStreamerGroup(ethers.ZeroHash, 1)
+        connect(yieldStreamerInitialization, user2).mapSourceYieldStreamerGroup(ZERO_HASH, 1)
       ).revertedWithCustomError(yieldStreamerInitialization, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Is reverted if source yield streamer group already mapped", async () => {
       const { yieldStreamerInitialization } = await setUpFixture(deployContracts);
-      await proveTx(yieldStreamerInitialization.mapSourceYieldStreamerGroup(ethers.ZeroHash, 1));
+      await proveTx(yieldStreamerInitialization.mapSourceYieldStreamerGroup(ZERO_HASH, 1));
       await expect(
-        yieldStreamerInitialization.mapSourceYieldStreamerGroup(ethers.ZeroHash, 1)
+        yieldStreamerInitialization.mapSourceYieldStreamerGroup(ZERO_HASH, 1)
       )
         .to.be.revertedWithCustomError(
           yieldStreamerInitialization,
@@ -210,11 +268,17 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
     it("Executes as expected", async () => {
       const { yieldStreamerInitialization } = await setUpFixture(deployContracts);
 
+      expect(await yieldStreamerInitialization.getYieldState(user1.address))
+        .to.be.deep.equal([0n, 0n, 0n, 0n, 0n]);
+
       await expect(
         yieldStreamerInitialization.setInitializedFlag(user1.address, true)
       )
         .to.emit(yieldStreamerInitialization, EVENT_NAME_INITIALIZED_FLAG_SET)
         .withArgs(user1.address, true);
+
+      expect(await yieldStreamerInitialization.getYieldState(user1.address))
+        .to.be.deep.equal([1n, 0n, 0n, 0n, 0n]);
 
       await expect(
         yieldStreamerInitialization.setInitializedFlag(user1.address, false)
@@ -222,10 +286,8 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
         .to.emit(yieldStreamerInitialization, EVENT_NAME_INITIALIZED_FLAG_SET)
         .withArgs(user1.address, false);
 
-      await expect(
-        yieldStreamerInitialization.setInitializedFlag(user1.address, false)
-      )
-        .to.not.emit(yieldStreamerInitialization, EVENT_NAME_INITIALIZED_FLAG_SET);
+      expect(await yieldStreamerInitialization.getYieldState(user1.address))
+        .to.be.deep.equal([0n, 0n, 0n, 0n, 0n]);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
