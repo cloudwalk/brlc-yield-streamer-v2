@@ -9,6 +9,7 @@ import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 // Constants for rate calculations and time units
 const HOUR = 60 * 60; // Number of seconds in an hour
 const NEGATIVE_TIME_SHIFT = 3 * HOUR; // Negative time shift in seconds (3 hours)
+const ZERO_ADDRESS = ethers.ZeroAddress;
 
 interface RateTier {
   rate: bigint;
@@ -440,26 +441,41 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
     it("Executes as expected", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      await expect(yieldStreamer.setFeeReceiver(feeReceiver))
+      // Initial fee receiver setup
+      await expect(yieldStreamer.setFeeReceiver(feeReceiver.address))
         .to.emit(yieldStreamer, EVENT_NAME_FEE_RECEIVER_CHANGED)
-        .withArgs(feeReceiver, ethers.ZeroAddress);
+        .withArgs(feeReceiver.address, ZERO_ADDRESS);
 
-      expect(await yieldStreamer.feeReceiver()).to.be.equal(feeReceiver);
+      expect(await yieldStreamer.feeReceiver()).to.equal(feeReceiver.address);
+
+      // Fee receiver reset
+      await expect(yieldStreamer.setFeeReceiver(ZERO_ADDRESS))
+        .to.emit(yieldStreamer, EVENT_NAME_FEE_RECEIVER_CHANGED)
+        .withArgs(ZERO_ADDRESS, feeReceiver.address);
+
+      expect(await yieldStreamer.feeReceiver()).to.equal(ZERO_ADDRESS);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
 
       await expect(
-        connect(yieldStreamer, user2).setFeeReceiver(feeReceiver)
+        connect(yieldStreamer, user2).setFeeReceiver(feeReceiver.address)
       ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
-    it("Is revert if provided receiver is the same as current", async () => {
+    it("Is revert if provided receiver is the same as the current one", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
-      await proveTx(yieldStreamer.setFeeReceiver(feeReceiver));
 
-      await expect(yieldStreamer.setFeeReceiver(feeReceiver)).revertedWithCustomError(
+      // If the current receiver address is zero
+      await expect(yieldStreamer.setFeeReceiver(ZERO_ADDRESS)).revertedWithCustomError(
+        yieldStreamer,
+        REVERT_ERROR_IF_FEE_RECEIVER_ALREADY_CONFIGURED
+      );
+
+      // If the current receiver address is non-zero
+      await proveTx(yieldStreamer.setFeeReceiver(feeReceiver.address));
+      await expect(yieldStreamer.setFeeReceiver(feeReceiver.address)).revertedWithCustomError(
         yieldStreamer,
         REVERT_ERROR_IF_FEE_RECEIVER_ALREADY_CONFIGURED
       );
