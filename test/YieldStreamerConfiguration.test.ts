@@ -2,13 +2,10 @@ import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import { connect, getAddress, getLatestBlockTimestamp, proveTx } from "../test-utils/eth";
+import { connect, getAddress, proveTx } from "../test-utils/eth";
 import { maxUintForBits, setUpFixture } from "../test-utils/common";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 
-// Constants for rate calculations and time units
-const HOUR = 60 * 60; // Number of seconds in an hour
-const NEGATIVE_TIME_SHIFT = 3 * HOUR; // Negative time shift in seconds (3 hours)
 const ZERO_ADDRESS = ethers.ZeroAddress;
 
 interface RateTier {
@@ -478,17 +475,6 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
       await expect(yieldStreamer.setFeeReceiver(feeReceiver.address)).revertedWithCustomError(
         yieldStreamer,
         REVERT_ERROR_IF_FEE_RECEIVER_ALREADY_CONFIGURED
-      );
-    });
-  });
-
-  describe("Function 'blockTimestamp'", async () => {
-    it("Executes as expected", async () => {
-      const { yieldStreamer } = await setUpFixture(deployContracts);
-      const currentBlockTimestamp = await getLatestBlockTimestamp();
-
-      expect(await yieldStreamer.blockTimestamp()).to.be.equal(
-        currentBlockTimestamp - NEGATIVE_TIME_SHIFT
       );
     });
   });
