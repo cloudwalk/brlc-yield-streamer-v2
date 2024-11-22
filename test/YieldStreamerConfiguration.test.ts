@@ -63,7 +63,7 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
   const REVERT_ERROR_IF_GROUP_ALREADY_ASSIGNED = "YieldStreamer_GroupAlreadyAssigned";
   const REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT = "AccessControlUnauthorizedAccount";
 
-  const GROUP_ID = 4294967295n;
+  const GROUP_ID = maxUintForBits(32);
   const EFFECTIVE_DAY_NON_ZERO = 1;
   const INPUT_YIELD_RATES: InputYieldRate[] = [
     {
@@ -184,6 +184,20 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
       expect(actualRates2).to.deep.equal(expectedRates2);
     });
 
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const yieldRate = INPUT_YIELD_RATES[0];
+
+      await expect(
+        connect(yieldStreamer, user2).addYieldRate(
+          GROUP_ID,
+          yieldRate.effectiveDay,
+          yieldRate.tierRates,
+          yieldRate.tierCaps
+        )
+      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+    });
+
     it("Is reverted if the first added rate object has a non-zero effective day", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
 
@@ -200,7 +214,7 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
     it("Is reverted if the new eff. day is not greater than the eff. day of the previous rate object", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
       await addYieldRates(yieldStreamer, [INPUT_YIELD_RATES[0], INPUT_YIELD_RATES[1]]);
-      const newYieldRate: InputYieldRate = { ...INPUT_YIELD_RATES[1] };
+      const newYieldRate: InputYieldRate = { ...INPUT_YIELD_RATES[2] };
       newYieldRate.effectiveDay = INPUT_YIELD_RATES[1].effectiveDay;
 
       await expect(
@@ -211,20 +225,6 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
           newYieldRate.tierCaps
         )
       ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_YIELD_RATE_INVALID_EFFECTIVE_DATE);
-    });
-
-    it("Is reverted if the caller does not have the owner role", async () => {
-      const { yieldStreamer } = await setUpFixture(deployContracts);
-      const yieldRate = INPUT_YIELD_RATES[0];
-
-      await expect(
-        connect(yieldStreamer, user2).addYieldRate(
-          GROUP_ID,
-          yieldRate.effectiveDay,
-          yieldRate.tierRates,
-          yieldRate.tierCaps
-        )
-      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
   });
 
@@ -418,7 +418,7 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
       ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
-    it("Is reverted if group already assigned", async () => {
+    it("Is reverted if the group is already assigned", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
       const accounts = [user1.address];
       const forceYieldAccrue = false;
