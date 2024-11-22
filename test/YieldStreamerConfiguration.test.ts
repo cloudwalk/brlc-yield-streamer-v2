@@ -264,18 +264,14 @@ describe("Contract 'YieldStreamer', the configuration part", async () => {
     it("Is reverted if the caller does not have the owner role", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
       const itemIndex = 1;
-      const inputRateUpdated: InputYieldRate = { ...INPUT_YIELD_RATES[itemIndex] };
-      inputRateUpdated.effectiveDay = (INPUT_YIELD_RATES[0].effectiveDay + INPUT_YIELD_RATES[1].effectiveDay) / 2n;
-      inputRateUpdated.tierRates = INPUT_YIELD_RATES[0].tierRates;
-      inputRateUpdated.tierCaps = INPUT_YIELD_RATES[2].tierCaps;
 
       await expect(
         connect(yieldStreamer, user2).updateYieldRate(
           GROUP_ID,
           itemIndex,
-          inputRateUpdated.effectiveDay,
-          inputRateUpdated.tierRates,
-          inputRateUpdated.tierCaps
+          INPUT_YIELD_RATES[itemIndex].effectiveDay,
+          INPUT_YIELD_RATES[itemIndex].tierRates,
+          INPUT_YIELD_RATES[itemIndex].tierCaps
         )
       ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
