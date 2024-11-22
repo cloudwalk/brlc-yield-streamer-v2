@@ -88,7 +88,7 @@ contract YieldStreamerTestable is YieldStreamer {
         return _roundUp(amount);
     }
 
-    function map(AccruePreview memory accrue, bool round) external pure returns (ClaimPreview memory) {
-        return _map(accrue, round);
+    function map(AccruePreview memory accrue) external pure returns (ClaimPreview memory) {
+        return _map(accrue);
     }
 }

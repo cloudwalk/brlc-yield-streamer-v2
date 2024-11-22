@@ -110,13 +110,9 @@ interface IYieldStreamerPrimary_Functions {
      * Estimates the yield amount that can be claimed without modifying the contract state.
      *
      * @param account The address of the account to query.
-     * @param round Whether to round the yield and fee amounts.
      * @return A `ClaimPreview` struct containing details of the claimable yield.
      */
-    function getClaimPreview(
-        address account,
-        bool round
-    ) external view returns (IYieldStreamerTypes.ClaimPreview memory);
+    function getClaimPreview(address account) external view returns (IYieldStreamerTypes.ClaimPreview memory);
 
     /**
      * @dev Provides a preview of the yield accrual for a given account over time.
