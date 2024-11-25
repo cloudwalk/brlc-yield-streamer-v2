@@ -340,7 +340,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
       );
     });
 
-    it("Reverted if account is already initialized", async () => {
+    it("Is reverted if account is already initialized", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
       const accounts = [user1.address, user2.address];
       await proveTx(await yieldStreamer.initializeAccounts([accounts[1]]));
@@ -350,7 +350,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_ACCOUNT_ALREADY_INITIALIZED);
     });
 
-    it("Reverted if account address is zero", async () => {
+    it("Is reverted if account address is zero", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
       const accounts = [user1.address, ZERO_ADDRESS];
 
