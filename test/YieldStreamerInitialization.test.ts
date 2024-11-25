@@ -60,7 +60,6 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
   async function deployContracts(): Promise<Fixture> {
     const tokenMockFactory = await ethers.getContractFactory("ERC20TokenMock");
-
     const tokenMock = await tokenMockFactory.deploy("Mock Token", "MTK");
     await tokenMock.waitForDeployment();
 
@@ -87,10 +86,9 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         yieldStreamer.setSourceYieldStreamer(user1.address)
-      )
-        .to.emit(yieldStreamer, EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED);
+      ).to.emit(yieldStreamer, EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED);
 
-      expect(await yieldStreamer.sourceYieldStreamer()).to.be.equal(user1.address);
+      expect(await yieldStreamer.sourceYieldStreamer()).to.equal(user1.address);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
@@ -98,7 +96,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         connect(yieldStreamer, user2).setSourceYieldStreamer(user1.address)
-      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Revert if new source yield streamer is the same", async () => {
@@ -107,11 +105,10 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         yieldStreamer.setSourceYieldStreamer(user1.address)
-      )
-        .to.be.revertedWithCustomError(
-          yieldStreamer,
-          REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_ALREADY_CONFIGURED
-        );
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_ALREADY_CONFIGURED
+      );
     });
   });
 
@@ -144,9 +141,9 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
         ];
 
       expect(await yieldStreamer.getYieldState(user1.address))
-        .to.be.deep.equal([0n, 0n, 0n, 0n, 0n]);
+        .to.deep.equal([0n, 0n, 0n, 0n, 0n]);
       expect(await yieldStreamer.getYieldState(user2.address))
-        .to.be.deep.equal([0n, 0n, 0n, 0n, 0n]);
+        .to.deep.equal([0n, 0n, 0n, 0n, 0n]);
 
       await proveTx(yieldStreamerV1.setClaimAllPreview(user1.address, claimPreviewResult));
       await proveTx(yieldStreamerV1.setClaimAllPreview(user2.address, claimPreviewResult));
@@ -170,7 +167,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         connect(yieldStreamer, user2).initializeAccounts(accounts)
-      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Is reverted if accounts array is empty", async () => {
@@ -178,8 +175,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         yieldStreamer.initializeAccounts([])
-      )
-        .to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_EMPTY_ARRAY);
+      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_EMPTY_ARRAY);
     });
 
     it("Is reverted if the yield streamer source is not configured", async () => {
@@ -188,11 +184,10 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         yieldStreamer.initializeAccounts([user1.address])
-      )
-        .to.be.revertedWithCustomError(
-          yieldStreamer,
-          REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_NOT_CONFIGURED
-        );
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_NOT_CONFIGURED
+      );
     });
 
     it("Is reverted if the account is not a blocklister in the yield streamer source", async () => {
@@ -201,11 +196,10 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         yieldStreamer.initializeAccounts([user1.address])
-      )
-        .to.be.revertedWithCustomError(
-          yieldStreamer,
-          REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_UNAUTHORIZED_BLOCKLISTER
-        );
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_UNAUTHORIZED_BLOCKLISTER
+      );
     });
 
     it("Reverted if account is already initialized", async () => {
@@ -215,8 +209,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         yieldStreamer.initializeAccounts(accounts)
-      )
-        .to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_ACCOUNT_ALREADY_INITIALIZED);
+      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_ACCOUNT_ALREADY_INITIALIZED);
     });
 
     it("Reverted if account address is zero", async () => {
@@ -224,8 +217,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         yieldStreamer.initializeAccounts([ZERO_ADDRESS])
-      )
-        .to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED);
+      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED);
     });
   });
 
@@ -236,10 +228,9 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, GROUP_ID)
-      )
-        .to.emit(yieldStreamer, EVENT_NAME_GROUP_MAPPED);
+      ).to.emit(yieldStreamer, EVENT_NAME_GROUP_MAPPED);
 
-      expect(await yieldStreamer.getGroupId(ZERO_HASH)).to.be.equal(GROUP_ID);
+      expect(await yieldStreamer.getGroupId(ZERO_HASH)).to.equal(GROUP_ID);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
@@ -247,7 +238,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         connect(yieldStreamer, user2).mapSourceYieldStreamerGroup(ZERO_HASH, 1)
-      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Is reverted if source yield streamer group already mapped", async () => {
@@ -255,11 +246,10 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
       await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, 1));
       await expect(
         yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, 1)
-      )
-        .to.be.revertedWithCustomError(
-          yieldStreamer,
-          REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED
-        );
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED
+      );
     });
   });
 
@@ -294,7 +284,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
       await expect(
         connect(yieldStreamer, user2).setInitializedFlag(user1.address, true)
-      ).revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
   });
 });
