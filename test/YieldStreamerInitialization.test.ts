@@ -3,7 +3,7 @@ import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { connect, getAddress, getBlockTimestamp, proveTx } from "../test-utils/eth";
-import { setUpFixture } from "../test-utils/common";
+import { maxUintForBits, setUpFixture } from "../test-utils/common";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 
 const HOUR = 60 * 60; // Number of seconds in an hour
@@ -142,30 +142,62 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
   });
 
   describe("Function 'mapSourceYieldStreamerGroup()'", async () => {
+    const groupKey = (ZERO_HASH);
+    const groupId = maxUintForBits(32);
+
     it("Executes as expected", async () => {
-      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const GROUP_ID = 4294967295n;
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
+      // Some group key can be mapped to a non-zero group ID
       await expect(
-        yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, GROUP_ID)
-      ).to.emit(yieldStreamer, EVENT_NAME_GROUP_MAPPED);
+        yieldStreamer.mapSourceYieldStreamerGroup(groupKey, groupId)
+      ).to.emit(
+        yieldStreamer,
+        EVENT_NAME_GROUP_MAPPED
+      ).withArgs(
+        groupKey,
+        groupId, // newGroupId
+        0 // oldGroupId
+      );
+      expect(await yieldStreamer.getGroupId(groupKey)).to.equal(groupId);
 
-      expect(await yieldStreamer.getGroupId(ZERO_HASH)).to.equal(GROUP_ID);
+      // Some group key can be mapped to the zero group ID
+      await expect(
+        yieldStreamer.mapSourceYieldStreamerGroup(groupKey, 0)
+      ).to.emit(
+        yieldStreamer,
+        EVENT_NAME_GROUP_MAPPED
+      ).withArgs(
+        groupKey,
+        0, // newGroupId
+        groupId // oldGroupId
+      );
+      expect(await yieldStreamer.getGroupId(groupKey)).to.equal(0);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
-      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       await expect(
-        connect(yieldStreamer, user2).mapSourceYieldStreamerGroup(ZERO_HASH, 1)
+        connect(yieldStreamer, user1).mapSourceYieldStreamerGroup(groupKey, groupId)
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Is reverted if source yield streamer group already mapped", async () => {
-      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, 1));
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      // Check for the zero initial group ID
       await expect(
-        yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, 1)
+        yieldStreamer.mapSourceYieldStreamerGroup(groupKey, 0)
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED
+      );
+
+      // Check for a non-zero initial group ID
+      await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(groupKey, groupId));
+      await expect(
+        yieldStreamer.mapSourceYieldStreamerGroup(groupKey, groupId)
       ).to.be.revertedWithCustomError(
         yieldStreamer,
         REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED
