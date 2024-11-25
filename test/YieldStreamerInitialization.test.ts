@@ -31,17 +31,17 @@ interface ClaimResult {
 
 describe("Contract 'YieldStreamer', the initialization part", async () => {
   const EVENT_NAME_ACCOUNT_INITIALIZED = "YieldStreamer_AccountInitialized";
-  const EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED = "YieldStreamer_SourceYieldStreamerChanged";
   const EVENT_NAME_GROUP_MAPPED = "YieldStreamer_GroupMapped";
   const EVENT_NAME_INITIALIZED_FLAG_SET = "YieldStreamer_InitializedFlagSet";
+  const EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED = "YieldStreamer_SourceYieldStreamerChanged";
 
-  const REVERT_ERROR_IF_EMPTY_ARRAY = "YieldStreamer_EmptyArray";
   const REVERT_ERROR_IF_ACCOUNT_ALREADY_INITIALIZED = "YieldStreamer_AccountAlreadyInitialized";
   const REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED = "YieldStreamer_AccountInitializationProhibited";
-  const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_NOT_CONFIGURED = "YieldStreamer_SourceYieldStreamerNotConfigured";
+  const REVERT_ERROR_IF_EMPTY_ARRAY = "YieldStreamer_EmptyArray";
   const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_ALREADY_CONFIGURED = "YieldStreamer_SourceYieldStreamerAlreadyConfigured";
   const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED =
     "YieldStreamer_SourceYieldStreamerGroupAlreadyMapped";
+  const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_NOT_CONFIGURED = "YieldStreamer_SourceYieldStreamerNotConfigured";
   const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_UNAUTHORIZED_BLOCKLISTER =
     "YieldStreamer_SourceYieldStreamerUnauthorizedBlocklister";
   const REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT = "AccessControlUnauthorizedAccount";
