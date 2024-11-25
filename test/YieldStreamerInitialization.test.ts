@@ -364,33 +364,36 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
     it("Executes as expected", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
 
-      expect(await yieldStreamer.getYieldState(user1.address))
-        .to.be.deep.equal([0n, 0n, 0n, 0n, 0n]);
+      expect(normalizeYieldState(await yieldStreamer.getYieldState(user1.address))).to.deep.equal(defaultYieldState);
 
-      await expect(
-        yieldStreamer.setInitializedFlag(user1.address, true)
-      )
+      // Check change: 0 => 1
+      await expect(yieldStreamer.setInitializedFlag(user1.address, true))
         .to.emit(yieldStreamer, EVENT_NAME_INITIALIZED_FLAG_SET)
         .withArgs(user1.address, true);
+      const expectedYieldState: YieldState = { ...defaultYieldState, flags: 1n };
+      expect(normalizeYieldState(await yieldStreamer.getYieldState(user1.address))).to.deep.equal(expectedYieldState);
 
-      expect(await yieldStreamer.getYieldState(user1.address))
-        .to.be.deep.equal([1n, 0n, 0n, 0n, 0n]);
+      // Check change: 1 => 1
+      await expect(yieldStreamer.setInitializedFlag(user1.address, true))
+        .not.to.emit(yieldStreamer, EVENT_NAME_INITIALIZED_FLAG_SET);
 
-      await expect(
-        yieldStreamer.setInitializedFlag(user1.address, false)
-      )
+      // Check change: 1 => 0
+      await expect(yieldStreamer.setInitializedFlag(user1.address, false))
         .to.emit(yieldStreamer, EVENT_NAME_INITIALIZED_FLAG_SET)
         .withArgs(user1.address, false);
+      expectedYieldState.flags = 0n;
+      expect(normalizeYieldState(await yieldStreamer.getYieldState(user1.address))).to.deep.equal(expectedYieldState);
 
-      expect(await yieldStreamer.getYieldState(user1.address))
-        .to.be.deep.equal([0n, 0n, 0n, 0n, 0n]);
+      // Check change: 0 => 0
+      await expect(yieldStreamer.setInitializedFlag(user1.address, false))
+        .not.to.emit(yieldStreamer, EVENT_NAME_INITIALIZED_FLAG_SET);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
 
       await expect(
-        connect(yieldStreamer, user2).setInitializedFlag(user1.address, true)
+        connect(yieldStreamer, user1).setInitializedFlag(user1.address, true)
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
   });
