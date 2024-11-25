@@ -52,7 +52,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
   // Get the signer representing the test user before the tests run
   before(async () => {
-    [user1, user2] = await ethers.getSigners();
+    [/* skip deployer*/, user1, user2] = await ethers.getSigners();
 
     // Contract factories with the explicitly specified deployer account
     yieldStreamerFactory = await ethers.getContractFactory("YieldStreamerMock");
@@ -81,30 +81,59 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
   }
 
   describe("Function 'setSourceYieldStreamer()'", async () => {
+    const sourceYieldStreamerAddressStub = "0x0000000000000000000000000000000000000001";
+
     it("Executes as expected", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
 
+      // Can be set to non-zero
       await expect(
-        yieldStreamer.setSourceYieldStreamer(user1.address)
-      ).to.emit(yieldStreamer, EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED);
+        yieldStreamer.setSourceYieldStreamer(sourceYieldStreamerAddressStub)
+      ).to.emit(
+        yieldStreamer,
+        EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED
+      ).withArgs(
+        ZERO_ADDRESS, // oldSourceYieldStreamer
+        sourceYieldStreamerAddressStub // newSourceYieldStreamer
+      );
+      expect(await yieldStreamer.sourceYieldStreamer()).to.equal(sourceYieldStreamerAddressStub);
 
-      expect(await yieldStreamer.sourceYieldStreamer()).to.equal(user1.address);
+      // Can be set to zero
+      await expect(
+        yieldStreamer.setSourceYieldStreamer(ZERO_ADDRESS)
+      ).to.emit(
+        yieldStreamer,
+        EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED
+      ).withArgs(
+        sourceYieldStreamerAddressStub, // oldSourceYieldStreamer
+        ZERO_ADDRESS // newSourceYieldStreamer
+      );
+      expect(await yieldStreamer.sourceYieldStreamer()).to.equal(ZERO_ADDRESS);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
 
       await expect(
-        connect(yieldStreamer, user2).setSourceYieldStreamer(user1.address)
+        connect(yieldStreamer, user1).setSourceYieldStreamer(sourceYieldStreamerAddressStub)
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
     it("Revert if new source yield streamer is the same", async () => {
       const { yieldStreamer } = await setUpFixture(deployContracts);
-      await proveTx(yieldStreamer.setSourceYieldStreamer(user1.address));
 
+      // Check for the zero initial address
       await expect(
-        yieldStreamer.setSourceYieldStreamer(user1.address)
+        yieldStreamer.setSourceYieldStreamer(ZERO_ADDRESS)
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_ALREADY_CONFIGURED
+      );
+
+      // Check for a non-zero initial address
+      await proveTx(yieldStreamer.setSourceYieldStreamer(sourceYieldStreamerAddressStub));
+      await expect(
+        yieldStreamer.setSourceYieldStreamer(sourceYieldStreamerAddressStub)
       ).to.be.revertedWithCustomError(
         yieldStreamer,
         REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_ALREADY_CONFIGURED
