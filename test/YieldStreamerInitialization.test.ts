@@ -73,6 +73,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
   const EVENT_NAME_GROUP_MAPPED = "YieldStreamer_GroupMapped";
   const EVENT_NAME_INITIALIZED_FLAG_SET = "YieldStreamer_InitializedFlagSet";
   const EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED = "YieldStreamer_SourceYieldStreamerChanged";
+  const EVENT_NAME_BLOCKLIST_CALLED = "YieldStreamerV1Mock_BlocklistCalled";
 
   const REVERT_ERROR_IF_ACCOUNT_ALREADY_INITIALIZED = "YieldStreamer_AccountAlreadyInitialized";
   const REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED = "YieldStreamer_AccountInitializationProhibited";
@@ -94,7 +95,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
     [/* skip deployer*/, user1, user2] = await ethers.getSigners();
 
     // Contract factories with the explicitly specified deployer account
-    yieldStreamerFactory = await ethers.getContractFactory("YieldStreamerMock");
+    yieldStreamerFactory = await ethers.getContractFactory("YieldStreamer");
   });
 
   async function deployContracts(): Promise<Fixture> {
@@ -198,7 +199,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
         groupId, // newGroupId
         0 // oldGroupId
       );
-      expect(await yieldStreamer.getGroupId(groupKey)).to.equal(groupId);
+      expect(await yieldStreamer.sourceGroupMapping(groupKey)).to.equal(groupId);
 
       // Some group key can be mapped to the zero group ID
       await expect(
@@ -211,7 +212,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
         0, // newGroupId
         groupId // oldGroupId
       );
-      expect(await yieldStreamer.getGroupId(groupKey)).to.equal(0);
+      expect(await yieldStreamer.sourceGroupMapping(groupKey)).to.equal(0);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
@@ -287,7 +288,8 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
             balances[i],
             expectedYieldStates[i].accruedYield,
             0 // streamYield
-          );
+          )
+          .to.emit(yieldStreamerV1, EVENT_NAME_BLOCKLIST_CALLED);
       }
       for (let i = 0; i < accounts.length; ++i) {
         expect(

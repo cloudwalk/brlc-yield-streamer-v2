@@ -218,6 +218,16 @@ abstract contract YieldStreamerInitialization is
         return _yieldStreamerInitializationStorage().sourceYieldStreamer;
     }
 
+    /**
+     * @dev Retrieves the group ID associated with a given group key from the source yield streamer.
+     *
+     * @param groupKey The unique identifier for the group key from the source yield streamer.
+     * @return groupId The corresponding group ID in this contract.
+     */
+    function _getSourceGroupMapping(bytes32 groupKey) internal view returns (uint256) {
+        return _yieldStreamerInitializationStorage().groupIds[groupKey];
+    }
+
     // ------------------ Overrides ------------------------------- //
 
     /**

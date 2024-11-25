@@ -10,6 +10,13 @@ import { IYieldStreamerV1 } from "../interfaces/IYieldStreamerV1.sol";
  * @dev An implementation of the {YieldStreamerV1} contract for testing purposes.
  */
 contract YieldStreamerV1Mock is IYieldStreamerV1 {
+    // Events
+
+    /**
+     * @dev Emitted when an blocklist function is called.
+     */
+    event YieldStreamerV1Mock_BlocklistCalled();
+
     // Errors
     error YieldStreamerV1Mock_NotImplemented();
 
@@ -33,6 +40,7 @@ contract YieldStreamerV1Mock is IYieldStreamerV1 {
      */
     function blocklist(address account) external {
         // revert YieldStreamerV1Mock_NotImplemented();
+        emit YieldStreamerV1Mock_BlocklistCalled();
     }
 
     /**
