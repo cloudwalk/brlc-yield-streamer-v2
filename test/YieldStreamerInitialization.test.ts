@@ -141,6 +141,38 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
     });
   });
 
+  describe("Function 'mapSourceYieldStreamerGroup()'", async () => {
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const GROUP_ID = 4294967295n;
+
+      await expect(
+        yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, GROUP_ID)
+      ).to.emit(yieldStreamer, EVENT_NAME_GROUP_MAPPED);
+
+      expect(await yieldStreamer.getGroupId(ZERO_HASH)).to.equal(GROUP_ID);
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+
+      await expect(
+        connect(yieldStreamer, user2).mapSourceYieldStreamerGroup(ZERO_HASH, 1)
+      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
+    });
+
+    it("Is reverted if source yield streamer group already mapped", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, 1));
+      await expect(
+        yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, 1)
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED
+      );
+    });
+  });
+
   describe("Function 'initializeAccounts()'", async () => {
     it("Executes as expected", async () => {
       const { yieldStreamer, yieldStreamerV1 } = await setUpFixture(deployAndConfigureContracts);
@@ -247,38 +279,6 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
       await expect(
         yieldStreamer.initializeAccounts([ZERO_ADDRESS])
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED);
-    });
-  });
-
-  describe("Function 'mapSourceYieldStreamerGroup()'", async () => {
-    it("Executes as expected", async () => {
-      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const GROUP_ID = 4294967295n;
-
-      await expect(
-        yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, GROUP_ID)
-      ).to.emit(yieldStreamer, EVENT_NAME_GROUP_MAPPED);
-
-      expect(await yieldStreamer.getGroupId(ZERO_HASH)).to.equal(GROUP_ID);
-    });
-
-    it("Is reverted if the caller does not have the owner role", async () => {
-      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-
-      await expect(
-        connect(yieldStreamer, user2).mapSourceYieldStreamerGroup(ZERO_HASH, 1)
-      ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
-    });
-
-    it("Is reverted if source yield streamer group already mapped", async () => {
-      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, 1));
-      await expect(
-        yieldStreamer.mapSourceYieldStreamerGroup(ZERO_HASH, 1)
-      ).to.be.revertedWithCustomError(
-        yieldStreamer,
-        REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED
-      );
     });
   });
 
