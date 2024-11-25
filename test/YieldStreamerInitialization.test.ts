@@ -29,7 +29,7 @@ interface ClaimResult {
   yield: bigint;
 }
 
-describe("Contract 'YieldStreamer', the initialization part", function () {
+describe("Contract 'YieldStreamer', the initialization part", async () => {
   const EVENT_NAME_ACCOUNT_INITIALIZED = "YieldStreamer_AccountInitialized";
   const EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED = "YieldStreamer_SourceYieldStreamerChanged";
   const EVENT_NAME_GROUP_MAPPED = "YieldStreamer_GroupMapped";
@@ -40,8 +40,10 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
   const REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED = "YieldStreamer_AccountInitializationProhibited";
   const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_NOT_CONFIGURED = "YieldStreamer_SourceYieldStreamerNotConfigured";
   const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_ALREADY_CONFIGURED = "YieldStreamer_SourceYieldStreamerAlreadyConfigured";
-  const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED = "YieldStreamer_SourceYieldStreamerGroupAlreadyMapped";
-  const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_UNAUTHORIZED_BLOCKLISTER = "YieldStreamer_SourceYieldStreamerUnauthorizedBlocklister";
+  const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_GROUP_ALREADY_MAPPED =
+    "YieldStreamer_SourceYieldStreamerGroupAlreadyMapped";
+  const REVERT_ERROR_IF_SOURCE_YIELD_STREAMER_UNAUTHORIZED_BLOCKLISTER =
+    "YieldStreamer_SourceYieldStreamerUnauthorizedBlocklister";
   const REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT = "AccessControlUnauthorizedAccount";
 
   let yieldStreamerInitializationFactory: ContractFactory;
@@ -134,7 +136,6 @@ describe("Contract 'YieldStreamer', the initialization part", function () {
     it("Is reverted if the caller does not have the owner role", async () => {
       const { yieldStreamerInitialization } = await setUpFixture(deployAndConfigureContracts);
       const accounts = [user1.address, user2.address];
-
 
       await expect(
         connect(yieldStreamerInitialization, user2).initializeAccounts(accounts)
