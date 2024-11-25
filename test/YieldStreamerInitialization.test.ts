@@ -4,7 +4,6 @@ import { Contract, ContractFactory } from "ethers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { connect, getAddress, getBlockTimestamp, proveTx } from "../test-utils/eth";
 import { maxUintForBits, setUpFixture } from "../test-utils/common";
-import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 
 const HOUR = 60 * 60; // Number of seconds in an hour
 const NEGATIVE_TIME_SHIFT = 3 * HOUR; // Negative time shift in seconds (3 hours)
@@ -14,6 +13,15 @@ const ZERO_HASH = ethers.ZeroHash;
 interface Fixture {
   yieldStreamer: Contract;
   yieldStreamerV1: Contract;
+  tokenMock: Contract;
+}
+
+interface YieldState {
+  flags: bigint;
+  streamYield: bigint;
+  accruedYield: bigint;
+  lastUpdateTimestamp: bigint;
+  lastUpdateBalance: bigint;
 }
 
 interface ClaimResult {
@@ -27,6 +35,37 @@ interface ClaimResult {
   shortfall: bigint;
   fee: bigint;
   yield: bigint;
+}
+
+const defaultYieldState = {
+  flags: 0n,
+  streamYield: 0n,
+  accruedYield: 0n,
+  lastUpdateTimestamp: 0n,
+  lastUpdateBalance: 0n
+};
+
+const defaultClaimResult: ClaimResult = {
+  nextClaimDay: 0n,
+  nextClaimDebit: 0n,
+  firstYieldDay: 0n,
+  prevClaimDebit: 0n,
+  primaryYield: 0n,
+  streamYield: 0n,
+  lastDayPartialYield: 0n,
+  shortfall: 0n,
+  fee: 0n,
+  yield: 0n
+};
+
+function normalizeYieldState(yieldState: YieldState): YieldState {
+  return {
+    flags: yieldState.flags,
+    streamYield: yieldState.streamYield,
+    accruedYield: yieldState.accruedYield,
+    lastUpdateTimestamp: yieldState.lastUpdateTimestamp,
+    lastUpdateBalance: yieldState.lastUpdateBalance
+  };
 }
 
 describe("Contract 'YieldStreamer', the initialization part", async () => {
@@ -70,14 +109,14 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
     const yieldStreamer: Contract = await upgrades.deployProxy(yieldStreamerFactory, [getAddress(tokenMock)]);
     await yieldStreamer.waitForDeployment();
 
-    return { yieldStreamer, yieldStreamerV1 };
+    return { yieldStreamer, yieldStreamerV1, tokenMock };
   }
 
   async function deployAndConfigureContracts(): Promise<Fixture> {
-    const { yieldStreamer, yieldStreamerV1 } = await deployContracts();
-    await proveTx(yieldStreamer.setSourceYieldStreamer(yieldStreamerV1));
+    const fixture = await deployContracts();
+    await proveTx(fixture.yieldStreamer.setSourceYieldStreamer(getAddress(fixture.yieldStreamerV1)));
 
-    return { yieldStreamer, yieldStreamerV1 };
+    return fixture;
   }
 
   describe("Function 'setSourceYieldStreamer()'", async () => {
@@ -207,51 +246,57 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
   describe("Function 'initializeAccounts()'", async () => {
     it("Executes as expected", async () => {
-      const { yieldStreamer, yieldStreamerV1 } = await setUpFixture(deployAndConfigureContracts);
+      const { yieldStreamer, yieldStreamerV1, tokenMock } = await setUpFixture(deployAndConfigureContracts);
       const accounts = [user1.address, user2.address];
+      const balances = [maxUintForBits(64), 1n];
+      const groupKey = (ZERO_HASH);
+      const groupId = 123;
+      const claimPreviewResults: ClaimResult[] = [
+        { ...defaultClaimResult, primaryYield: maxUintForBits(64) - 1n, lastDayPartialYield: 1n },
+        { ...defaultClaimResult, primaryYield: 1n, lastDayPartialYield: 2n }
+      ];
 
-      const claimPreviewResult: ClaimResult = {
-        nextClaimDay: 1n,
-        nextClaimDebit: 2n,
-        firstYieldDay: 3n,
-        prevClaimDebit: 4n,
-        primaryYield: 5n,
-        streamYield: 6n,
-        lastDayPartialYield: 7n,
-        shortfall: 8n,
-        fee: 9n,
-        yield: 10n
-      };
+      for (const account of accounts) {
+        expect(normalizeYieldState(await yieldStreamer.getYieldState(account))).to.deep.equal(defaultYieldState);
+      }
 
-      const expectedBlockTimestamp = (await getBlockTimestamp("latest")) - NEGATIVE_TIME_SHIFT;
-      const expectedYieldState =
-        [
-          1n,
-          0n,
-          claimPreviewResult.primaryYield + claimPreviewResult.lastDayPartialYield,
-          expectedBlockTimestamp,
-          0n
-        ];
-
-      expect(await yieldStreamer.getYieldState(user1.address))
-        .to.deep.equal([0n, 0n, 0n, 0n, 0n]);
-      expect(await yieldStreamer.getYieldState(user2.address))
-        .to.deep.equal([0n, 0n, 0n, 0n, 0n]);
-
-      await proveTx(yieldStreamerV1.setClaimAllPreview(user1.address, claimPreviewResult));
-      await proveTx(yieldStreamerV1.setClaimAllPreview(user2.address, claimPreviewResult));
+      await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(groupKey, groupId));
+      for (let i = 0; i < accounts.length; ++i) {
+        await proveTx(yieldStreamerV1.setClaimAllPreview(accounts[i], claimPreviewResults[i]));
+        await proveTx(tokenMock.mint(accounts[i], balances[i]));
+      }
 
       const tx = yieldStreamer.initializeAccounts(accounts);
       const txReceipt = await proveTx(tx);
-      await expect(tx)
-        .to.emit(yieldStreamer, EVENT_NAME_ACCOUNT_INITIALIZED)
-        .withArgs(user1.address, anyValue, anyValue, anyValue, anyValue)
-        .to.emit(yieldStreamer, EVENT_NAME_ACCOUNT_INITIALIZED)
-        .withArgs(user2.address, anyValue, anyValue, anyValue, anyValue);
-      expectedYieldState[3] = await getBlockTimestamp(txReceipt.blockNumber) - NEGATIVE_TIME_SHIFT;
 
-      expect(await yieldStreamer.getYieldState(user1.address)).to.deep.equal(expectedYieldState);
-      expect(await yieldStreamer.getYieldState(user2.address)).to.deep.equal(expectedYieldState);
+      const expectedBlockTimestamp = (await getBlockTimestamp(txReceipt.blockNumber)) - NEGATIVE_TIME_SHIFT;
+      const expectedYieldStates: YieldState[] = claimPreviewResults.map((res, i) => ({
+        flags: 1n,
+        streamYield: 0n,
+        accruedYield: res.primaryYield + res.lastDayPartialYield,
+        lastUpdateTimestamp: BigInt(expectedBlockTimestamp),
+        lastUpdateBalance: balances[i]
+      }));
+
+      for (let i = 0; i < accounts.length; ++i) {
+        await expect(tx)
+          .to.emit(yieldStreamer, EVENT_NAME_ACCOUNT_INITIALIZED)
+          .withArgs(
+            accounts[i],
+            groupId,
+            balances[i],
+            expectedYieldStates[i].accruedYield,
+            0 // streamYield
+          );
+      }
+      for (let i = 0; i < accounts.length; ++i) {
+        expect(
+          normalizeYieldState(await yieldStreamer.getYieldState(accounts[i]))
+        ).to.deep.equal(
+          expectedYieldStates[i],
+          `Wrong yield state for account[${i}]`
+        );
+      }
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
@@ -259,7 +304,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
       const accounts = [user1.address, user2.address];
 
       await expect(
-        connect(yieldStreamer, user2).initializeAccounts(accounts)
+        connect(yieldStreamer, user1).initializeAccounts(accounts)
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_UNAUTHORIZED_ACCOUNT);
     });
 
@@ -285,7 +330,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
     it("Is reverted if the account is not a blocklister in the yield streamer source", async () => {
       const { yieldStreamer, yieldStreamerV1 } = await setUpFixture(deployAndConfigureContracts);
-      yieldStreamerV1.setBlocklisterStatus(false);
+      await proveTx(yieldStreamerV1.setBlocklisterStatus(false));
 
       await expect(
         yieldStreamer.initializeAccounts([user1.address])
@@ -297,8 +342,8 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
     it("Reverted if account is already initialized", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const accounts = [user1.address];
-      await proveTx(await yieldStreamer.initializeAccounts(accounts));
+      const accounts = [user1.address, user2.address];
+      await proveTx(await yieldStreamer.initializeAccounts([accounts[1]]));
 
       await expect(
         yieldStreamer.initializeAccounts(accounts)
@@ -307,9 +352,10 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
 
     it("Reverted if account address is zero", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const accounts = [user1.address, ZERO_ADDRESS];
 
       await expect(
-        yieldStreamer.initializeAccounts([ZERO_ADDRESS])
+        yieldStreamer.initializeAccounts(accounts)
       ).to.be.revertedWithCustomError(yieldStreamer, REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED);
     });
   });
