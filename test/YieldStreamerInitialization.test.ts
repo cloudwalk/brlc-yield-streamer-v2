@@ -155,16 +155,17 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
       await proveTx(yieldStreamerV1.setClaimAllPreview(user1.address, claimPreviewResult));
       await proveTx(yieldStreamerV1.setClaimAllPreview(user2.address, claimPreviewResult));
 
-      await expect(
-        yieldStreamerInitialization.initializeAccounts(accounts)
-      )
+      const tx = yieldStreamerInitialization.initializeAccounts(accounts);
+      const txReceipt = await proveTx(tx);
+      await expect(tx)
         .to.emit(yieldStreamerInitialization, EVENT_NAME_ACCOUNT_INITIALIZED)
         .withArgs(user1.address, anyValue, anyValue, anyValue, anyValue)
         .to.emit(yieldStreamerInitialization, EVENT_NAME_ACCOUNT_INITIALIZED)
         .withArgs(user2.address, anyValue, anyValue, anyValue, anyValue);
+      expectedYieldState[3] = await getBlockTimestamp(txReceipt.blockNumber) - NEGATIVE_TIME_SHIFT;
 
-      expect(await yieldStreamerInitialization.getYieldState(user1.address)).to.be.deep.equal(expectedYieldState);
-      expect(yieldStreamerInitialization.getYieldState(user2.address)).to.be.deep.equal(expectedYieldState);
+      expect(await yieldStreamerInitialization.getYieldState(user1.address)).to.deep.equal(expectedYieldState);
+      expect(await yieldStreamerInitialization.getYieldState(user2.address)).to.deep.equal(expectedYieldState);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {
