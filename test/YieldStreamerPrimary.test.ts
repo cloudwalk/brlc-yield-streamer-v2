@@ -103,7 +103,7 @@ interface Fixture {
   tokenMock: Contract;
 }
 
-describe.only("Contract 'YieldStreamerPrimary'", async () => {
+describe("Contract 'YieldStreamerPrimary'", async () => {
   let yieldStreamerFactory: ContractFactory;
   let yieldStreamerV1MockFactory: ContractFactory;
   let tokenMockFactory: ContractFactory;
