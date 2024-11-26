@@ -70,10 +70,10 @@ function normalizeYieldState(yieldState: YieldState): YieldState {
 
 describe("Contract 'YieldStreamer', the initialization part", async () => {
   const EVENT_NAME_ACCOUNT_INITIALIZED = "YieldStreamer_AccountInitialized";
+  const EVENT_NAME_BLOCKLIST_CALLED = "YieldStreamerV1Mock_BlocklistCalled";
   const EVENT_NAME_GROUP_MAPPED = "YieldStreamer_GroupMapped";
   const EVENT_NAME_INITIALIZED_FLAG_SET = "YieldStreamer_InitializedFlagSet";
   const EVENT_NAME_SOURCE_YIELD_STREAMER_CHANGED = "YieldStreamer_SourceYieldStreamerChanged";
-  const EVENT_NAME_BLOCKLIST_CALLED = "YieldStreamerV1Mock_BlocklistCalled";
 
   const REVERT_ERROR_IF_ACCOUNT_ALREADY_INITIALIZED = "YieldStreamer_AccountAlreadyInitialized";
   const REVERT_ERROR_IF_ACCOUNT_INITIALIZATION_PROHIBITED = "YieldStreamer_AccountInitializationProhibited";
@@ -288,8 +288,10 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
             balances[i],
             expectedYieldStates[i].accruedYield,
             0 // streamYield
-          )
-          .to.emit(yieldStreamerV1, EVENT_NAME_BLOCKLIST_CALLED);
+          );
+        await expect(tx)
+          .to.emit(yieldStreamerV1, EVENT_NAME_BLOCKLIST_CALLED)
+          .withArgs(accounts[i]);
       }
       for (let i = 0; i < accounts.length; ++i) {
         expect(

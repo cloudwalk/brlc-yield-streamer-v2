@@ -15,7 +15,7 @@ contract YieldStreamerV1Mock is IYieldStreamerV1 {
     /**
      * @dev Emitted when an blocklist function is called.
      */
-    event YieldStreamerV1Mock_BlocklistCalled();
+    event YieldStreamerV1Mock_BlocklistCalled(address account);
 
     // Errors
     error YieldStreamerV1Mock_NotImplemented();
@@ -39,8 +39,7 @@ contract YieldStreamerV1Mock is IYieldStreamerV1 {
      * @inheritdoc IYieldStreamerV1
      */
     function blocklist(address account) external {
-        // revert YieldStreamerV1Mock_NotImplemented();
-        emit YieldStreamerV1Mock_BlocklistCalled();
+        emit YieldStreamerV1Mock_BlocklistCalled(account);
     }
 
     /**
