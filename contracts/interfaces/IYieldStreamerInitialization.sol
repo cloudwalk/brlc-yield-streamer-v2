@@ -122,6 +122,14 @@ interface IYieldStreamerInitialization_Functions {
      * @return The address of the source yield streamer contract.
      */
     function sourceYieldStreamer() external view returns (address);
+
+    /**
+     * @dev Retrieves the group ID associated with a given group key from the source yield streamer.
+     *
+     * @param groupKey The unique identifier for the group key from the source yield streamer.
+     * @return groupId The corresponding group ID in this contract.
+     */
+    function getSourceGroupMapping(bytes32 groupKey) external view returns (uint256);
 }
 
 /**

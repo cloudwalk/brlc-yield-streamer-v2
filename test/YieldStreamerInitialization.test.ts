@@ -199,7 +199,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
         groupId, // newGroupId
         0 // oldGroupId
       );
-      expect(await yieldStreamer.sourceGroupMapping(groupKey)).to.equal(groupId);
+      expect(await yieldStreamer.getSourceGroupMapping(groupKey)).to.equal(groupId);
 
       // Some group key can be mapped to the zero group ID
       await expect(
@@ -212,7 +212,7 @@ describe("Contract 'YieldStreamer', the initialization part", async () => {
         0, // newGroupId
         groupId // oldGroupId
       );
-      expect(await yieldStreamer.sourceGroupMapping(groupKey)).to.equal(0);
+      expect(await yieldStreamer.getSourceGroupMapping(groupKey)).to.equal(0);
     });
 
     it("Is reverted if the caller does not have the owner role", async () => {

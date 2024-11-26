@@ -248,12 +248,9 @@ contract YieldStreamer is
     }
 
     /**
-     * @dev Retrieves the group ID associated with a given group key from the source yield streamer.
-     *
-     * @param groupKey The unique identifier for the group key from the source yield streamer.
-     * @return groupId The corresponding group ID in this contract.
+     * @inheritdoc IYieldStreamerInitialization_Functions
      */
-    function sourceGroupMapping(bytes32 groupKey) external view returns (uint256) {
+    function getSourceGroupMapping(bytes32 groupKey) external view returns (uint256) {
         return _getSourceGroupMapping(groupKey);
     }
 
