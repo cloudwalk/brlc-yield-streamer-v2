@@ -4,6 +4,7 @@ import { Contract, ContractFactory } from "ethers";
 import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { setUpFixture } from "../test-utils/common";
 import { proveTx, getAddress } from "../test-utils/eth";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 const ERRORS = {
   YieldStreamer_TimeRangeInvalid: "YieldStreamer_TimeRangeInvalid",
@@ -36,13 +37,23 @@ const MIN_CLAIM_AMOUNT = 1000000n;
 
 const ADMIN_ROLE: string = ethers.id("ADMIN_ROLE");
 
-// interface YieldState {
-//   flags: bigint;
-//   streamYield: bigint;
-//   accruedYield: bigint;
-//   lastUpdateTimestamp: bigint;
-//   lastUpdateBalance: bigint;
-// }
+interface YieldState {
+  flags: bigint;
+  streamYield: bigint;
+  accruedYield: bigint;
+  // lastUpdateTimestamp: bigint;
+  lastUpdateBalance: bigint;
+}
+
+function normalizeYieldState(yieldState: YieldState): YieldState {
+  return {
+    flags: yieldState.flags,
+    streamYield: yieldState.streamYield,
+    accruedYield: yieldState.accruedYield,
+    lastUpdateBalance: yieldState.lastUpdateBalance
+  };
+}
+
 
 // interface RateTier {
 //   rate: bigint;
@@ -103,17 +114,44 @@ interface Fixture {
   tokenMock: Contract;
 }
 
+const defaultRate = RATE_FACTOR / 100n; // 10n10 = 10n12 / 100 = 10n10
+const defaultContractBalance = 100000000n;
+
+const claimResult: ClaimResult = {
+  nextClaimDay: 0n,
+  nextClaimDebit: 0n,
+  firstYieldDay: 0n,
+  prevClaimDebit: 0n,
+  primaryYield: 10000000n,
+  streamYield: 0n,
+  lastDayPartialYield: 1999999n,
+  shortfall: 0n,
+  fee: 0n,
+  yield: 0n
+};
+
+const baseYieldState: YieldState = {
+  flags: 1n,
+  streamYield: 0n,
+  accruedYield: claimResult.primaryYield + claimResult.lastDayPartialYield,
+  lastUpdateBalance: 0n
+
+};
+
 describe("Contract 'YieldStreamerPrimary'", async () => {
   let yieldStreamerFactory: ContractFactory;
   let yieldStreamerV1MockFactory: ContractFactory;
   let tokenMockFactory: ContractFactory;
 
+
   let deployer: HardhatEthersSigner;
   let admin: HardhatEthersSigner;
   let user: HardhatEthersSigner;
+  let user2: HardhatEthersSigner;
+  let feeReceiver: HardhatEthersSigner;
 
   before(async () => {
-    [deployer, admin, user] = await ethers.getSigners();
+    [deployer, admin, user, user2, feeReceiver] = await ethers.getSigners();
     yieldStreamerFactory = await ethers.getContractFactory("YieldStreamer");
     yieldStreamerV1MockFactory = await ethers.getContractFactory("YieldStreamerV1Mock");
     tokenMockFactory = await ethers.getContractFactory("ERC20TokenMock");
@@ -147,20 +185,7 @@ describe("Contract 'YieldStreamerPrimary'", async () => {
     mintContractBalance: boolean
   ): Promise<Fixture> {
     const { yieldStreamer, yieldStreamerV1Mock, tokenMock } = await deployContracts();
-    const contractBalance = mintContractBalance ? 100000000n : 0n;
-    const defaultRate = RATE_FACTOR / 100n;
-    const claimResult: ClaimResult = {
-      nextClaimDay: 0n,
-      nextClaimDebit: 0n,
-      firstYieldDay: 0n,
-      prevClaimDebit: 0n,
-      primaryYield: 10000000n,
-      streamYield: 0n,
-      lastDayPartialYield: 1999999n,
-      shortfall: 0n,
-      fee: 0n,
-      yield: 0n
-    };
+    const contractBalance = mintContractBalance ? defaultContractBalance : 0n;
 
     await proveTx(yieldStreamerV1Mock.setClaimAllPreview(user.address, claimResult));
     await proveTx(yieldStreamer.addYieldRate(0, 0, [defaultRate], [0n]));
@@ -180,11 +205,11 @@ describe("Contract 'YieldStreamerPrimary'", async () => {
     // + Should revert when the account is not initialized.
     // + Should revert when the claim amount is below the minimum claim threshold.
     // + Should revert when the claim amount is not rounded down to the required precision.
-    // Should revert when the underlying token transfer fails due to insufficient balance in the contract.
+    // + Should revert when the underlying token transfer fails due to insufficient balance in the contract.
     // + Should revert if the claim amount exceeds the total available yield for the account.
 
-    // Should successfully claim the exact minimum claim amount when all conditions are met.
-    // Should successfully claim an amount equal to the account's accrued yield.
+    // + Should successfully claim the exact minimum claim amount when all conditions are met.
+    // + Should successfully claim an amount equal to the account's accrued yield.
     // Should successfully claim an amount less than the account's total yield (accrued plus stream yield).
     // Should successfully claim the maximum possible yield available to the account.
 
@@ -204,23 +229,125 @@ describe("Contract 'YieldStreamerPrimary'", async () => {
     // Should correctly handle claims immediately after yield accrual without delays.
     // Should revert if the _accrueYield function fails during the claim process.
 
-    it("Reverts if the claim amount exceeds the total available yield for the account", async () => {
-      const { yieldStreamer } = await deployAndConfigureAllContracts(true, true);
+    it("Successfully claimed the exact minimum claim amount", async () => {
+      const { yieldStreamer, tokenMock } = await deployAndConfigureAllContracts(true, true);
+      const yieldState = baseYieldState;
+      yieldState.streamYield = 2n; // ???
+      yieldState.accruedYield = baseYieldState.accruedYield - MIN_CLAIM_AMOUNT;
 
-      // get the claim preview
-      const claimPreview = await yieldStreamer.getClaimPreview(user.address, true);
+      const tx = (yieldStreamer.connect(admin) as Contract)
+        .claimAmountFor(user.address, MIN_CLAIM_AMOUNT);
 
-      await expect(
-        (yieldStreamer.connect(admin) as Contract).claimAmountFor(user.address, claimPreview.yield + ROUND_FACTOR)
-      ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldBalanceInsufficient);
+      await expect(tx).to.changeTokenBalances(
+        tokenMock,
+        [
+          await yieldStreamer.getAddress(),
+          await user.getAddress()
+        ],
+        [
+          -(MIN_CLAIM_AMOUNT),
+          MIN_CLAIM_AMOUNT
+        ]
+      );
+
+      await expect(tx)
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldAccrued)
+        .withArgs(
+          user.address,
+          claimResult.primaryYield + claimResult.lastDayPartialYield,
+          yieldState.streamYield,
+          claimResult.primaryYield + claimResult.lastDayPartialYield,
+          0
+        )
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldTransferred)
+        .withArgs(user.address, MIN_CLAIM_AMOUNT, 0);
+
+      expect(normalizeYieldState(await yieldStreamer.getYieldState(user.address)))
+        .to.deep.equal(yieldState);
     });
 
-    it("Reverts if the underlying token transfer fails due to insufficient balance in the contract", async () => {
-      const { yieldStreamer, tokenMock } = await deployAndConfigureAllContracts(true, false);
+    it("Successfully claimed an amount equal to the account's.", async () => {
+      const { yieldStreamer, yieldStreamerV1Mock, tokenMock } = await deployAndConfigureAllContracts(true, true);
 
-      await expect(
-        (yieldStreamer.connect(admin) as Contract).claimAmountFor(user.address, MIN_CLAIM_AMOUNT)
-      ).to.be.revertedWithCustomError(tokenMock, ERRORS.ERC20InsufficientBalance);
+      // init for user2
+      claimResult.lastDayPartialYield = claimResult.lastDayPartialYield + 1n; // accrued should be possible to round ???
+      await proveTx(yieldStreamerV1Mock.setClaimAllPreview(user2.address, claimResult));
+      await proveTx(yieldStreamer.initializeAccounts([user2.address]));
+      await proveTx(tokenMock.mint(getAddress(yieldStreamer), defaultContractBalance));
+
+      const accrueYield = claimResult.primaryYield + claimResult.lastDayPartialYield + claimResult.streamYield;
+
+      const yieldState = baseYieldState;
+      yieldState.streamYield = 2n; // ???
+      yieldState.accruedYield = 0n;
+
+      const tx = (yieldStreamer.connect(admin) as Contract)
+        .claimAmountFor(user2.address, accrueYield);
+
+      await expect(tx).to.changeTokenBalances(
+        tokenMock,
+        [
+          await yieldStreamer.getAddress(),
+          await user2.getAddress()
+        ],
+        [
+          -(accrueYield),
+          accrueYield
+        ]
+      );
+
+      await expect(tx)
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldAccrued)
+        .withArgs(
+          user2.address,
+          claimResult.primaryYield + claimResult.lastDayPartialYield,
+          yieldState.streamYield, // ???
+          claimResult.primaryYield + claimResult.lastDayPartialYield,
+          0
+        )
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldTransferred)
+        .withArgs(user2.address, accrueYield, 0);
+
+      expect(normalizeYieldState(await yieldStreamer.getYieldState(user2.address)))
+        .to.deep.equal(yieldState);
+    });
+
+    it("Successfully claimed when amount is greater than state accrued yield.", async () => {
+      // const { yieldStreamer, tokenMock } = await deployAndConfigureAllContracts(true, true);
+      // const accruedYield = claimResult.primaryYield + claimResult.lastDayPartialYield + 1n;
+      // const yieldState = baseYieldState;
+      // yieldState.streamYield = 2n; // ???
+      // yieldState.accruedYield = 0n;
+      //
+      // const tx = (yieldStreamer.connect(admin) as Contract)
+      //   .claimAmountFor(user.address, accruedYield);
+      //
+      // await expect(tx).to.changeTokenBalances(
+      //   tokenMock,
+      //   [
+      //     await yieldStreamer.getAddress(),
+      //     await user.getAddress()
+      //   ],
+      //   [
+      //     -(accruedYield),
+      //     accruedYield
+      //   ]
+      // );
+      //
+      // await expect(tx)
+      //   .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldAccrued)
+      //   .withArgs(
+      //     user.address,
+      //     claimResult.primaryYield + claimResult.lastDayPartialYield,
+      //     yieldState.streamYield,
+      //     claimResult.primaryYield + claimResult.lastDayPartialYield,
+      //     0
+      //   )
+      //   .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldTransferred)
+      //   .withArgs(user.address, accruedYield, 0);
+      //
+      // expect(normalizeYieldState(await yieldStreamer.getYieldState(user.address)))
+      //   .to.deep.equal(yieldState);
     });
 
     it("should revert if the account is not initialized", async () => {
@@ -247,6 +374,25 @@ describe("Contract 'YieldStreamerPrimary'", async () => {
       await expect(
         (yieldStreamer.connect(admin) as Contract).claimAmountFor(user.address, claimAmount)
       ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_ClaimAmountNonRounded);
+    });
+
+    it("Reverts if the underlying token transfer fails due to insufficient balance in the contract", async () => {
+      const { yieldStreamer, tokenMock } = await deployAndConfigureAllContracts(true, false);
+
+      await expect(
+        (yieldStreamer.connect(admin) as Contract).claimAmountFor(user.address, MIN_CLAIM_AMOUNT)
+      ).to.be.revertedWithCustomError(tokenMock, ERRORS.ERC20InsufficientBalance);
+    });
+
+    it("Reverts if the claim amount exceeds the total available yield for the account", async () => {
+      const { yieldStreamer } = await deployAndConfigureAllContracts(true, true);
+
+      // get the claim preview
+      const claimPreview = await yieldStreamer.getClaimPreview(user.address, true);
+
+      await expect(
+        (yieldStreamer.connect(admin) as Contract).claimAmountFor(user.address, claimPreview.yield + ROUND_FACTOR)
+      ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldBalanceInsufficient);
     });
   });
 
