@@ -133,34 +133,6 @@ contract YieldStreamer is
     /**
      * @inheritdoc IYieldStreamerPrimary_Functions
      */
-    function getGroupYieldRates(uint256 groupId) external view returns (YieldRate[] memory) {
-        return _getGroupYieldRates(groupId);
-    }
-
-    /**
-     * @inheritdoc IYieldStreamerPrimary_Functions
-     */
-    function getAccountGroup(address account) external view returns (uint256) {
-        return _getAccountGroup(account);
-    }
-
-    /**
-     * @inheritdoc IYieldStreamerPrimary_Functions
-     */
-    function underlyingToken() external view returns (address) {
-        return _underlyingToken();
-    }
-
-    /**
-     * @inheritdoc IYieldStreamerPrimary_Functions
-     */
-    function feeReceiver() external view returns (address) {
-        return _feeReceiver();
-    }
-
-    /**
-     * @inheritdoc IYieldStreamerPrimary_Functions
-     */
     function blockTimestamp() external view returns (uint256) {
         return _blockTimestamp();
     }
@@ -170,7 +142,7 @@ contract YieldStreamer is
     /**
      * @inheritdoc IYieldStreamerConfiguration_Functions
      */
-    function assignGroup(
+    function assignMultipleAccountsToGroup(
         uint256 groupId, // Tools: this comment prevents Prettier from formatting into a single line.
         address[] memory accounts,
         bool forceYieldAccrue
@@ -208,6 +180,41 @@ contract YieldStreamer is
      */
     function setFeeReceiver(address newFeeReceiver) external onlyRole(OWNER_ROLE) {
         _setFeeReceiver(newFeeReceiver);
+    }
+
+    /**
+     * @inheritdoc IYieldStreamerConfiguration_Functions
+     */
+    function getGroupYieldRates(uint256 groupId) external view returns (YieldRate[] memory) {
+        return _getGroupYieldRates(groupId);
+    }
+
+    /**
+     * @inheritdoc IYieldStreamerConfiguration_Functions
+     */
+    function getAccountYieldRates(address account) external view returns (YieldRate[] memory) {
+        return _getAccountYieldRates(account);
+    }
+
+    /**
+     * @inheritdoc IYieldStreamerConfiguration_Functions
+     */
+    function getAccountGroup(address account) external view returns (uint256) {
+        return _getAccountGroup(account);
+    }
+
+    /**
+     * @inheritdoc IYieldStreamerConfiguration_Functions
+     */
+    function underlyingToken() external view returns (address) {
+        return _underlyingToken();
+    }
+
+    /**
+     * @inheritdoc IYieldStreamerConfiguration_Functions
+     */
+    function feeReceiver() external view returns (address) {
+        return _feeReceiver();
     }
 
     // ------------------ IYieldStreamerInitialization ------------ //

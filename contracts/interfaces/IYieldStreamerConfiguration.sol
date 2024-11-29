@@ -2,6 +2,8 @@
 
 pragma solidity ^0.8.0;
 
+import { IYieldStreamerTypes } from "./IYieldStreamerTypes.sol";
+
 /**
  * @title IYieldStreamerConfiguration_Errors interface
  * @author CloudWalk Inc. (See https://www.cloudwalk.io)
@@ -134,7 +136,11 @@ interface IYieldStreamerConfiguration_Functions {
      * @param accounts An array of account addresses to assign to the group.
      * @param forceYieldAccrue If true, accrues yield for the accounts before assignment.
      */
-    function assignGroup(uint256 groupId, address[] memory accounts, bool forceYieldAccrue) external;
+    function assignMultipleAccountsToGroup(
+        uint256 groupId, // Tools: this comment prevents Prettier from formatting into a single line.
+        address[] memory accounts,
+        bool forceYieldAccrue
+    ) external;
 
     /**
      * @dev Sets the fee receiver address for the yield streamer.
@@ -143,6 +149,44 @@ interface IYieldStreamerConfiguration_Functions {
      * @param newFeeReceiver The new fee receiver address.
      */
     function setFeeReceiver(address newFeeReceiver) external;
+
+    /**
+     * @dev Retrieves the array of yield rates associated with a specific group ID.
+     *
+     * @param groupId The ID of the group to query.
+     * @return An array of `YieldRate` structs representing the group's yield rates.
+     */
+    function getGroupYieldRates(uint256 groupId) external view returns (IYieldStreamerTypes.YieldRate[] memory);
+
+    /**
+     * @dev Retrieves the array of yield rates associated with a specific account.
+     *
+     * @param account The address of the account to query.
+     * @return An array of `YieldRate` structs representing the account's yield rates.
+     */
+    function getAccountYieldRates(address account) external view returns (IYieldStreamerTypes.YieldRate[] memory);
+
+    /**
+     * @dev Retrieves the group ID to which a specific account is assigned.
+     *
+     * @param account The address of the account to query.
+     * @return The group ID of the account.
+     */
+    function getAccountGroup(address account) external view returns (uint256);
+
+    /**
+     * @dev Returns the address of the underlying token used by the yield streamer.
+     *
+     * @return The address of the underlying ERC20 token contract.
+     */
+    function underlyingToken() external view returns (address);
+
+    /**
+     * @dev Returns the address of the fee receiver configured in the yield streamer.
+     *
+     * @return The address of the fee receiver.
+     */
+    function feeReceiver() external view returns (address);
 }
 
 /**

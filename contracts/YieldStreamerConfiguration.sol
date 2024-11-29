@@ -25,15 +25,15 @@ abstract contract YieldStreamerConfiguration is
     // ------------------ Functions ------------------------------- //
 
     /**
-    //  * @dev Adds a new yield rate entry for a specific group.
-    //  * The yield rate becomes effective starting from the specified effective day.
-    //  * The `effectiveDay` represents the day index since the Unix epoch (i.e., number of days since timestamp zero).
-    //  *
-    //  * @param groupId The ID of the group to add the yield rate to.
-    //  * @param effectiveDay The day number from which the yield rate becomes effective for the group.
-    //  * @param tierRates The yield rate value for each tier (scaled by RATE_FACTOR).
-    //  * @param tierCaps The balance cap for each tier.
-    //  */
+     * @dev Adds a new yield rate entry for a specific group.
+     * The yield rate becomes effective starting from the specified effective day.
+     * The `effectiveDay` represents the day index since the Unix epoch (i.e., number of days since timestamp zero).
+     *
+     * @param groupId The ID of the group to add the yield rate to.
+     * @param effectiveDay The day number from which the yield rate becomes effective for the group.
+     * @param tierRates The yield rate value for each tier (scaled by RATE_FACTOR).
+     * @param tierCaps The balance cap for each tier.
+     */
     function _addYieldRate(
         uint256 groupId, // Tools: this comment prevents Prettier from formatting into a single line.
         uint256 effectiveDay,
@@ -42,6 +42,16 @@ abstract contract YieldStreamerConfiguration is
     ) internal {
         YieldStreamerStorageLayout storage $ = _yieldStreamerStorage();
         YieldRate[] storage rates = $.yieldRates[groupId.toUint32()];
+
+        // Ensure rates and caps arrays have the same length
+        if (tierRates.length != tierCaps.length) {
+            revert YieldStreamer_ArrayLengthMismatch();
+        }
+
+        // Ensure that rates and caps arrays are not empty
+        if (tierRates.length == 0) {
+            revert YieldStreamer_EmptyArray();
+        }
 
         // Ensure first item in the array always starts with effectiveDay 0
         if (rates.length == 0 && effectiveDay != 0) {
@@ -87,6 +97,16 @@ abstract contract YieldStreamerConfiguration is
     ) internal {
         YieldStreamerStorageLayout storage $ = _yieldStreamerStorage();
         YieldRate[] storage rates = $.yieldRates[groupId.toUint32()];
+
+        // Ensure that rates and caps arrays have the same length
+        if (tierRates.length != tierCaps.length) {
+            revert YieldStreamer_ArrayLengthMismatch();
+        }
+
+        // Ensure that rates and caps arrays are not empty
+        if (tierRates.length == 0) {
+            revert YieldStreamer_EmptyArray();
+        }
 
         // Ensure first item in the array always starts with effectiveDay = 0
         if (itemIndex == 0 && effectiveDay != 0) {
@@ -196,6 +216,55 @@ abstract contract YieldStreamerConfiguration is
         emit YieldStreamer_FeeReceiverChanged(newFeeReceiver, $.feeReceiver);
 
         $.feeReceiver = newFeeReceiver;
+    }
+
+    /**
+     * @dev Returns an array of yield rates associated with a specific group ID.
+     *
+     * @param groupId The ID of the group to get the yield rates for.
+     * @return An array of `YieldRate` structs representing the yield rates.
+     */
+    function _getGroupYieldRates(uint256 groupId) internal view returns (YieldRate[] memory) {
+        return _yieldStreamerStorage().yieldRates[groupId.toUint32()];
+    }
+
+    /**
+     * @dev Returns an array of yield rates associated with a specific account.
+     *
+     * @param account The address of the account to get the yield rates for.
+     * @return An array of `YieldRate` structs representing the yield rates.
+     */
+    function _getAccountYieldRates(address account) internal view returns (YieldRate[] memory) {
+        YieldStreamerStorageLayout storage $ = _yieldStreamerStorage();
+        return $.yieldRates[$.groups[account].id];
+    }
+
+    /**
+     * @dev Returns the group ID that the specified account belongs to.
+     *
+     * @param account The account to get the group ID for.
+     * @return The group ID of the account.
+     */
+    function _getAccountGroup(address account) internal view returns (uint256) {
+        return _yieldStreamerStorage().groups[account].id;
+    }
+
+    /**
+     * @dev Returns the address of the underlying token used by the yield streamer.
+     *
+     * @return The address of the underlying token contract.
+     */
+    function _underlyingToken() internal view returns (address) {
+        return _yieldStreamerStorage().underlyingToken;
+    }
+
+    /**
+     * @dev Returns the address of the fee receiver for the yield streamer.
+     *
+     * @return The address of the fee receiver.
+     */
+    function _feeReceiver() internal view returns (address) {
+        return _yieldStreamerStorage().feeReceiver;
     }
 
     // ------------------ Overrides ------------------ //

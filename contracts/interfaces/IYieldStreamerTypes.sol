@@ -8,6 +8,18 @@ pragma solidity ^0.8.0;
  * @dev Defines the data structures and enumerations for the yield streamer contract.
  */
 interface IYieldStreamerTypes {
+    // ------------------ Errors ---------------------------------- //
+
+    // NOTE: Common errors are moved here temporarily and will be removed in the future.
+
+    /// @dev Thrown when the provided array is empty.
+    error YieldStreamer_EmptyArray();
+
+    /// @dev Thrown when the provided arrays have different lengths.
+    error YieldStreamer_ArrayLengthMismatch();
+
+    // ------------------ Types ----------------------------------- //
+
     /**
      * @dev Enumeration of possible flag indices for the yield state.
      * Used to manage boolean flags within the `YieldState` structure using bitwise operations.

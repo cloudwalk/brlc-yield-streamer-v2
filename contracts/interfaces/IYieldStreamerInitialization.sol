@@ -8,9 +8,6 @@ pragma solidity ^0.8.0;
  * @dev Defines the custom errors used by the yield streamer initialization contract.
  */
 interface IYieldStreamerInitialization_Errors {
-    /// @dev Thrown when passed array is empty.
-    error YieldStreamer_EmptyArray();
-
     /// @dev Thrown when an account is already initialized.
     error YieldStreamer_AccountAlreadyInitialized(address account);
 

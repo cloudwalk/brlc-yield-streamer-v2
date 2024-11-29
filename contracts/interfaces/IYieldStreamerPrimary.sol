@@ -128,36 +128,6 @@ interface IYieldStreamerPrimary_Functions {
     function getAccruePreview(address account) external view returns (IYieldStreamerTypes.AccruePreview memory);
 
     /**
-     * @dev Retrieves the array of yield rates associated with a specific group ID.
-     *
-     * @param groupId The ID of the group to query.
-     * @return An array of `YieldRate` structs representing the group's yield rates.
-     */
-    function getGroupYieldRates(uint256 groupId) external view returns (IYieldStreamerTypes.YieldRate[] memory);
-
-    /**
-     * @dev Retrieves the group ID to which a specific account is assigned.
-     *
-     * @param account The address of the account to query.
-     * @return The group ID of the account.
-     */
-    function getAccountGroup(address account) external view returns (uint256);
-
-    /**
-     * @dev Returns the address of the underlying token used by the yield streamer.
-     *
-     * @return The address of the underlying ERC20 token contract.
-     */
-    function underlyingToken() external view returns (address);
-
-    /**
-     * @dev Returns the address of the fee receiver configured in the yield streamer.
-     *
-     * @return The address of the fee receiver.
-     */
-    function feeReceiver() external view returns (address);
-
-    /**
      * @dev Returns the current block timestamp as used by the contract.
      * May include adjustments such as negative time shifts.
      *
