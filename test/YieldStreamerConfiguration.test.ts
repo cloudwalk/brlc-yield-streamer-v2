@@ -88,7 +88,7 @@ function convertYieldRate(inputYieldRate: InputYieldRate): YieldRate {
   };
 }
 
-describe.only("Contract 'YieldStreamerConfiguration' (part of 'YieldStreamer')", async () => {
+describe("Contract 'YieldStreamerConfiguration' (part of 'YieldStreamer')", async () => {
   let yieldStreamerFactory: ContractFactory;
   let tokenMockFactory: ContractFactory;
   let deployer: HardhatEthersSigner;
@@ -370,7 +370,7 @@ describe.only("Contract 'YieldStreamerConfiguration' (part of 'YieldStreamer')",
 
     it("Reverts when updating yield rate with an invalid effective day", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      let itemIndex = 0;
+      let itemIndex;
 
       // Reverts when trying to set effective day equal to previous rate
       itemIndex = 1;
@@ -602,7 +602,7 @@ describe.only("Contract 'YieldStreamerConfiguration' (part of 'YieldStreamer')",
       await addYieldRates(yieldStreamer, INPUT_YIELD_RATES, GROUP_ID);
 
       const actualRates = (await yieldStreamer.getGroupYieldRates(GROUP_ID)).map(normalizeYieldRate);
-      const expectedRates = YIELD_RATES;
+      const expectedRates = (YIELD_RATES);
       expect(actualRates).to.deep.equal(expectedRates);
     });
 
@@ -668,7 +668,7 @@ describe.only("Contract 'YieldStreamerConfiguration' (part of 'YieldStreamer')",
       await proveTx(yieldStreamer.assignMultipleAccountsToGroup(GROUP_ID, [user1.address], false));
 
       const actualRates = (await yieldStreamer.getAccountYieldRates(user1.address)).map(normalizeYieldRate);
-      const expectedRates = YIELD_RATES;
+      const expectedRates = (YIELD_RATES);
       expect(actualRates).to.deep.equal(expectedRates);
     });
 

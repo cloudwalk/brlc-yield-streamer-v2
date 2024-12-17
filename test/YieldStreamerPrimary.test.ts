@@ -1,8 +1,7 @@
 import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
-import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
-import { setUpFixture } from "../test-utils/common";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { proveTx, getAddress } from "../test-utils/eth";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
@@ -53,7 +52,6 @@ function normalizeYieldState(yieldState: YieldState): YieldState {
     lastUpdateBalance: yieldState.lastUpdateBalance
   };
 }
-
 
 // interface RateTier {
 //   rate: bigint;
@@ -143,15 +141,12 @@ describe("Contract 'YieldStreamerPrimary'", async () => {
   let yieldStreamerV1MockFactory: ContractFactory;
   let tokenMockFactory: ContractFactory;
 
-
-  let deployer: HardhatEthersSigner;
   let admin: HardhatEthersSigner;
   let user: HardhatEthersSigner;
   let user2: HardhatEthersSigner;
-  let feeReceiver: HardhatEthersSigner;
 
   before(async () => {
-    [deployer, admin, user, user2, feeReceiver] = await ethers.getSigners();
+    [, admin, user, user2] = await ethers.getSigners();
     yieldStreamerFactory = await ethers.getContractFactory("YieldStreamer");
     yieldStreamerV1MockFactory = await ethers.getContractFactory("YieldStreamerV1Mock");
     tokenMockFactory = await ethers.getContractFactory("ERC20TokenMock");
@@ -181,8 +176,8 @@ describe("Contract 'YieldStreamerPrimary'", async () => {
   }
 
   async function deployAndConfigureAllContracts(
-    initializeAccounts: boolean,
-    mintContractBalance: boolean
+    initializeAccounts: boolean = false,
+    mintContractBalance: boolean = false
   ): Promise<Fixture> {
     const { yieldStreamer, yieldStreamerV1Mock, tokenMock } = await deployContracts();
     const contractBalance = mintContractBalance ? defaultContractBalance : 0n;
@@ -351,7 +346,7 @@ describe("Contract 'YieldStreamerPrimary'", async () => {
     });
 
     it("should revert if the account is not initialized", async () => {
-      const { yieldStreamer } = await deployAndConfigureAllContracts(false,true);
+      const { yieldStreamer } = await deployAndConfigureAllContracts(false, true);
       // TODO: Setup everything besides the account initialization.
       await expect(
         (yieldStreamer.connect(admin) as Contract).claimAmountFor(user.address, MIN_CLAIM_AMOUNT)

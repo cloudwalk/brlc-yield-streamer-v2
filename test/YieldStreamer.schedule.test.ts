@@ -1,9 +1,9 @@
 import { expect } from "chai";
 import { ethers, network, upgrades } from "hardhat";
 import { Contract } from "ethers";
-import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
-import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
-import { checkEquality } from "../test-utils/eth";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+import { checkEquality, connect } from "../test-utils/eth";
 
 // Constants for rate calculations and time units
 const RATE_FACTOR = BigInt(1000000000000); // Factor used in yield rate calculations (10^12)
@@ -72,12 +72,13 @@ async function getYieldState(yieldStreamer: Contract, account: string): Promise<
 /**
  * Tests a schedule of deposit and withdraw actions against expected yield states.
  * @param user The signer representing the user performing actions.
+ * @param erc20Token The token contract.
  * @param yieldStreamer The YieldStreamer contract instance.
  * @param actionItems The list of actions to perform in the test.
  * @param expectedYieldStates The expected yield states after each action.
  */
 async function testActionSchedule(
-  user: SignerWithAddress,
+  user: HardhatEthersSigner,
   erc20Token: Contract,
   yieldStreamer: Contract,
   actionItems: ActionItem[],
@@ -110,17 +111,17 @@ async function testActionSchedule(
     // Perform the deposit or withdraw action based on the action type
     if (actionItem.type === "deposit") {
       // Perform a deposit action
-      await erc20Token.connect(user).mint(user.address, actionItem.amount);
+      await connect(erc20Token, user).mint(user.address, actionItem.amount);
     } else if (actionItem.type === "withdraw") {
       // Perform a withdrawal action
-      await erc20Token.connect(user).burn(user.address, actionItem.amount);
+      await connect(erc20Token, user).burn(user.address, actionItem.amount);
     }
 
     // Fetch the actual yield state from the contract after the action
     const contractYieldState = await getYieldState(yieldStreamer, user.address);
 
     // Update the expected lastUpdateTimestamp with the adjusted block timestamp
-    const blockTimestamp = (await ethers.provider.getBlock("latest")).timestamp;
+    const blockTimestamp = (await ethers.provider.getBlock("latest"))?.timestamp ?? 0;
     expectedYieldStates[index].lastUpdateTimestamp = blockTimestamp - NEGATIVE_TIME_SHIFT;
 
     // Assert that the actual yield state matches the expected state
@@ -169,7 +170,7 @@ async function setUpFixture<T>(func: () => Promise<T>): Promise<T> {
 }
 
 describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function () {
-  let user: SignerWithAddress;
+  let user: HardhatEthersSigner;
   let adjustedBlockTime: number;
   const EXPECTED_VERSION: Version = {
     major: 2,
@@ -740,7 +741,7 @@ describe("YieldStreamer - Deposit/Withdraw Simulation Tests", function () {
 
   describe("Function '$__VERSION()'", async () => {
     it("Returns expected values", async () => {
-      const { yieldStreamer} = await setUpFixture(deployContracts);
+      const { yieldStreamer } = await setUpFixture(deployContracts);
       const yieldStreamerVersion = await yieldStreamer.$__VERSION();
       checkEquality(yieldStreamerVersion, EXPECTED_VERSION);
     });

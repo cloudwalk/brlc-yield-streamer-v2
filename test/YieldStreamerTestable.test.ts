@@ -1,9 +1,18 @@
 import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
-import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import { setUpFixture } from "../test-utils/common";
 import { getAddress } from "../test-utils/eth";
+
+/*
+ * Acronyms:
+ * - IB -- initial balance;
+ * - FDi -- full day number i, e.g. FD2 -- full day number 2;
+ * - PFD -- partial first day;
+ * - PLD -- partial last day;
+ * - SY -- stream yield.
+ */
 
 const NEGATIVE_TIME_SHIFT = 10800n; // 3 hours
 const RATE_FACTOR = 1000000000000n; // 10^12
@@ -238,17 +247,17 @@ describe("YieldStreamerTestable", async () => {
                 // FD1 Total: 90600
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-                40600n + // - T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + PFD yield)
+                40600n + // - T3: 1% on 3000000 + 1000000 + 60000 for 1 day (IB + SY + PFD)
                 // ------
                 // FD2 Total: 91506
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
               partialLastDayYield:
                 // PLD Total: 23105
                 7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
                 5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield)
+                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 6 hours (IB + SY + PFD + FD1)
               partialFirstDayYieldTiered: [
                 // PFD Total: 60000
                 simpleYield(1000000n, (RATE_FACTOR / 100n) * 3n, HOUR * 18n), // - PFD T1: 22500
@@ -408,12 +417,12 @@ describe("YieldStreamerTestable", async () => {
                 // FD2 Total: 91506
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
               partialLastDayYield:
                 // PLD Total: 23105
                 7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
                 5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
               partialFirstDayYieldTiered: [0n, 0n, 0n],
               fullDaysYieldTiered: [
                 // FD2 Total: 91506
@@ -573,7 +582,7 @@ describe("YieldStreamerTestable", async () => {
                 // FD2 Total: 91506
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
               partialLastDayYield: 0n,
               partialFirstDayYieldTiered: [0n, 0n, 0n],
               fullDaysYieldTiered: [
@@ -598,7 +607,7 @@ describe("YieldStreamerTestable", async () => {
                 // PLD Total: 23105
                 7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
                 5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
               partialFirstDayYieldTiered: [0n, 0n, 0n],
               fullDaysYieldTiered: [0n, 0n, 0n],
               partialLastDayYieldTiered: [
@@ -712,12 +721,12 @@ describe("YieldStreamerTestable", async () => {
               // FD2 Total: 91506
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
             partialLastDayYield:
               // PLD Total: 23105
               7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
               5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
             partialFirstDayYieldTiered: [
               // PFD Total: 60000
               simpleYield(1000000n, (RATE_FACTOR / 100n) * 3n, HOUR * 18n), // - PFD T1: 22500
@@ -846,12 +855,12 @@ describe("YieldStreamerTestable", async () => {
               // FD2 Total: 91506
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
             partialLastDayYield:
               // PLD Total: 23105
               7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
               5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
             partialFirstDayYieldTiered: [0n, 0n, 0n],
             fullDaysYieldTiered: [
               // FD2 Total: 91506
@@ -972,7 +981,7 @@ describe("YieldStreamerTestable", async () => {
               // FD2 Total: 91506
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
             partialLastDayYield: 0n,
             partialFirstDayYieldTiered: [0n, 0n, 0n],
             fullDaysYieldTiered: [
@@ -997,7 +1006,7 @@ describe("YieldStreamerTestable", async () => {
               // PLD Total: 23105
               7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
               5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
             partialFirstDayYieldTiered: [0n, 0n, 0n],
             fullDaysYieldTiered: [0n, 0n, 0n],
             partialLastDayYieldTiered: [
@@ -1292,7 +1301,7 @@ describe("YieldStreamerTestable", async () => {
             // FD2 Total: 91506
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-            41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + FDP yield + FD1 yield)
+            41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + FDP + FD1)
           partialLastDayYield: 0n,
           partialFirstDayYieldTiered: [
             // PFD Total: 60000
@@ -1358,7 +1367,7 @@ describe("YieldStreamerTestable", async () => {
             // LDP Total: 22952
             7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
             5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-            10452n, // - T3: 1% on 3000000 + 1000000 + 90000 + 90900 for 6 hours (Initial balance + Stream yield + FD1 yield + FD2 yield)
+            10452n, // - T3: 1% on 3000000 + 1000000 + 90000 + 90900 for 6 hours (IB + SY + FD1 + FD2)
           partialFirstDayYieldTiered: [0n, 0n, 0n],
           fullDaysYieldTiered: [
             // FD1 + FD2 Total: 180900
@@ -1426,12 +1435,12 @@ describe("YieldStreamerTestable", async () => {
             // FD2 Total: 91506
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-            41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + FDP yield + FD1 yield)
+            41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + FDP + FD1)
           partialLastDayYield:
             // PLD Total: 23105
             7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
             5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-            10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + FDP yield + FD1 yield + FD2 yield)
+            10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + FDP + FD1 + FD2)
           partialFirstDayYieldTiered: [
             // PFD Total: 60000
             simpleYield(1000000n, (RATE_FACTOR / 100n) * 3n, HOUR * 18n), // - PFD T1: 22500
@@ -1709,7 +1718,7 @@ describe("YieldStreamerTestable", async () => {
 
       const amount = 1000n;
       const rate = 0n; // Zero rate
-      const elapsedSeconds = HOUR;
+      const elapsedSeconds = (HOUR);
 
       // Call the `calculateSimpleYield` function
       const yieldAmount = await yieldStreamerTestable.calculateSimpleYield(amount, rate, elapsedSeconds);
@@ -1723,7 +1732,7 @@ describe("YieldStreamerTestable", async () => {
 
       const amount = 0n; // Zero amount
       const rate = 1000n;
-      const elapsedSeconds = HOUR;
+      const elapsedSeconds = (HOUR);
 
       // Call the `calculateSimpleYield` function
       const yieldAmount = await yieldStreamerTestable.calculateSimpleYield(amount, rate, elapsedSeconds);
@@ -1852,7 +1861,7 @@ describe("YieldStreamerTestable", async () => {
     const testCases: InRangeYieldRatesTestCase[] = [
       {
         description:
-          "`fromTimestamp` is 2s before the second rate effective day, `toTimestamp` is 1s before the second rate effective day",
+          "`fromTimestamp` is 2s before the second rate eff. day, `toTimestamp` is 1s before the second rate eff. day",
         fromTimestamp: -2n + secondRateEffectiveDay * DAY,
         toTimestamp: -1n + secondRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1860,7 +1869,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is exactly on the second rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is exactly on the second rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: 0n + secondRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1868,7 +1877,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is 1s after the second rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is 1s after the second rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: 1n + secondRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1876,7 +1885,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is 1s before the third rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is 1s before the third rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: -1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1884,7 +1893,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is exactly on the third rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is exactly on the third rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: 0n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1892,7 +1901,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1900,7 +1909,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is exactly on the second rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is exactly on the second rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: 0n + secondRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
@@ -1908,7 +1917,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s after the second rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is 1s after the second rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: 1n + secondRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
@@ -1916,7 +1925,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the third rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is 1s before the third rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: -1n + thirdRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
@@ -1924,7 +1933,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is exactly on the third rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is exactly on the third rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: 0n + thirdRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 2,
@@ -1932,7 +1941,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s after the third rate effective day, `toTimestamp` is 2s after the third rate effective day",
+          "`fromTimestamp` is 1s after the third rate eff. day, `toTimestamp` is 2s after the third rate eff. day",
         fromTimestamp: 1n + thirdRateEffectiveDay * DAY,
         toTimestamp: 2n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 2,
@@ -1940,7 +1949,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is exactly on the second rate effective day, `toTimestamp` is 1s before the third rate effective day",
+          "`fromTimestamp` is exactly on the second rate eff. day, `toTimestamp` is 1s before the third rate eff. day",
         fromTimestamp: 0n + secondRateEffectiveDay * DAY,
         toTimestamp: -1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
@@ -2163,7 +2172,7 @@ describe("YieldStreamerTestable", async () => {
       expect(yieldRates).to.deep.equal(rates.slice(1, 4));
     });
 
-    it("Should return a truncated array when `startIndex` and `endIndex` are different (include the first element)", async () => {
+    it("Should return a truncated array when `startIndex` != `endIndex` (include the first element)", async () => {
       const { yieldStreamerTestable } = await setUpFixture(deployContracts);
 
       const rates = getSampleYieldRates(5);
@@ -2176,7 +2185,7 @@ describe("YieldStreamerTestable", async () => {
       expect(yieldRates).to.deep.equal(rates.slice(0, 4));
     });
 
-    it("Should return a truncated array when `startIndex` and `endIndex` are different (include the last element)", async () => {
+    it("Should return a truncated array when `startIndex` != `endIndex` (include the last element)", async () => {
       const { yieldStreamerTestable } = await setUpFixture(deployContracts);
 
       const rates = getSampleYieldRates(5);
@@ -2189,7 +2198,7 @@ describe("YieldStreamerTestable", async () => {
       expect(yieldRates).to.deep.equal(rates.slice(1, 5));
     });
 
-    it("Should return a single element when `startIndex` and `endIndex` are the same (multiple rates in array)", async () => {
+    it("Should return a single element when `startIndex` == `endIndex` (multiple rates in array)", async () => {
       const { yieldStreamerTestable } = await setUpFixture(deployContracts);
 
       const rates = getSampleYieldRates(5);
@@ -2203,7 +2212,7 @@ describe("YieldStreamerTestable", async () => {
       expect(yieldRates[0]).to.deep.equal(rates[2]);
     });
 
-    it("Should return a single element when `startIndex` and `endIndex` are the same (single rate in array)", async () => {
+    it("Should return a single element when `startIndex` == `endIndex` (single rate in array)", async () => {
       const { yieldStreamerTestable } = await setUpFixture(deployContracts);
 
       const rates = getSampleYieldRates(1);
@@ -2222,7 +2231,7 @@ describe("YieldStreamerTestable", async () => {
 
       const rates = getSampleYieldRates(5);
 
-      // Arithmetic operation overflowed outside of an unchecked block
+      // Arithmetic operation overflowed outside an unchecked block
       await expect(yieldStreamerTestable.truncateArray(3, 2, rates)).to.be.revertedWithPanic(0x11);
     });
 
