@@ -2,7 +2,7 @@ apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
   name: brlc-yield-streamer-v2
-  description: BRLC yield streamer v2 smart contracts
+  description: Yield streamer V2 smart contracts
   annotations:
     github.com/project-slug: cloudwalk/brlc-yield-streamer-v2
     backstage.io/techdocs-ref: dir:.
@@ -16,6 +16,7 @@ metadata:
       title: Repository
       icon: github
 spec:
-  type: smart contract
+  type: smart-contract
+  system: Blockchain
   lifecycle: production
   owner: team-smart-contracts
