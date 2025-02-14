@@ -1,9 +1,9 @@
 import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
-import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
-import { setUpFixture } from "../test-utils/common";
-import { proveTx, getAddress } from "../test-utils/eth";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
+import { getAddress, proveTx } from "../test-utils/eth";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 const ERRORS = {
   YieldStreamer_TimeRangeInvalid: "YieldStreamer_TimeRangeInvalid",
@@ -18,11 +18,6 @@ const ERRORS = {
   YieldStreamer_NoYieldRatesInRange: "YieldStreamer_NoYieldRatesInRange",
   YieldStreamer_TimeRangeIsInvalid: "YieldStreamer_TimeRangeIsInvalid",
   ERC20InsufficientBalance: "ERC20InsufficientBalance"
-};
-
-const EVENTS = {
-  YieldStreamer_YieldAccrued: "YieldStreamer_YieldAccrued",
-  YieldStreamer_YieldTransferred: "YieldStreamer_YieldTransferred"
 };
 
 const NEGATIVE_TIME_SHIFT = 10800n; // 3 hours
@@ -103,17 +98,16 @@ interface Fixture {
   tokenMock: Contract;
 }
 
-describe.only("Contract 'YieldStreamerPrimary'", async () => {
+describe("Contract 'YieldStreamerPrimary'", async () => {
   let yieldStreamerFactory: ContractFactory;
   let yieldStreamerV1MockFactory: ContractFactory;
   let tokenMockFactory: ContractFactory;
 
-  let deployer: HardhatEthersSigner;
   let admin: HardhatEthersSigner;
   let user: HardhatEthersSigner;
 
   before(async () => {
-    [deployer, admin, user] = await ethers.getSigners();
+    [, admin, user] = await ethers.getSigners();
     yieldStreamerFactory = await ethers.getContractFactory("YieldStreamer");
     yieldStreamerV1MockFactory = await ethers.getContractFactory("YieldStreamerV1Mock");
     tokenMockFactory = await ethers.getContractFactory("ERC20TokenMock");
@@ -208,10 +202,13 @@ describe.only("Contract 'YieldStreamerPrimary'", async () => {
       const { yieldStreamer } = await deployAndConfigureAllContracts(true, true);
 
       // get the claim preview
-      const claimPreview = await yieldStreamer.getClaimPreview(user.address, true);
+      const claimPreview = await yieldStreamer.getClaimPreview(user.address);
 
       await expect(
-        (yieldStreamer.connect(admin) as Contract).claimAmountFor(user.address, claimPreview.yield + ROUND_FACTOR)
+        (yieldStreamer.connect(admin) as Contract).claimAmountFor(
+          user.address,
+          claimPreview.yieldRounded + ROUND_FACTOR
+        )
       ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldBalanceInsufficient);
     });
 
@@ -224,7 +221,7 @@ describe.only("Contract 'YieldStreamerPrimary'", async () => {
     });
 
     it("should revert if the account is not initialized", async () => {
-      const { yieldStreamer } = await deployAndConfigureAllContracts(false,true);
+      const { yieldStreamer } = await deployAndConfigureAllContracts(false, true);
       // TODO: Setup everything besides the account initialization.
       await expect(
         (yieldStreamer.connect(admin) as Contract).claimAmountFor(user.address, MIN_CLAIM_AMOUNT)
@@ -280,7 +277,7 @@ describe.only("Contract 'YieldStreamerPrimary'", async () => {
 
   describe("Function 'blockTimestamp()'", async () => {
     it("Executes as expected", async () => {
-      const { yieldStreamer } = await deployAndConfigureAllContracts();
+      const { yieldStreamer } = await deployAndConfigureAllContracts(false, false);
       const latest = await time.latest();
       const expected = BigInt(latest) - NEGATIVE_TIME_SHIFT;
       const blockTimestamp = await yieldStreamer.blockTimestamp();
@@ -290,7 +287,7 @@ describe.only("Contract 'YieldStreamerPrimary'", async () => {
 
   describe("Function 'proveYieldStreamer()'", async () => {
     it("Executes as expected", async () => {
-      const { yieldStreamer } = await deployAndConfigureAllContracts();
+      const { yieldStreamer } = await deployAndConfigureAllContracts(false, false);
       await expect(yieldStreamer.proveYieldStreamer()).to.not.be.reverted;
     });
   });
