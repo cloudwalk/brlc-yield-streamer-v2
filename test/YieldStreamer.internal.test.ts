@@ -1,114 +1,72 @@
 import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { Contract, ContractFactory } from "ethers";
-import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import {
+  AccruePreview,
+  ClaimPreview,
+  DAY,
+  ERRORS,
+  HOUR,
+  RATE_FACTOR,
+  RateTier,
+  ROUND_FACTOR,
+  YieldRate,
+  YieldResult,
+  YieldState
+} from "../test-utils/specific";
+import { getAddress } from "../test-utils/eth";
 import { setUpFixture } from "../test-utils/common";
 
-const NEGATIVE_TIME_SHIFT = 10800n; // 3 hours
-const RATE_FACTOR = 1000000000000n; // 10^12
-const ROUND_FACTOR = 10000n; // 10^4
-const DAY = 86400n; // 1 day (in seconds)
-const HOUR = 3600n; // 1 hour (in seconds)
-const INITIAL_DAY_INDEX = 21000n; // 21000 days
+const INITIAL_DAY_INDEX = 21_000n; // 21000 days
 const INITIAL_TIMESTAMP = INITIAL_DAY_INDEX * DAY;
 
-const REVERT_ERROR_IF_YIELD_RATE_ARRAY_IS_EMPTY = "YieldStreamer_YieldRateArrayIsEmpty";
-const REVERT_ERROR_IF_TIME_RANGE_IS_INVALID = "YieldStreamer_TimeRangeIsInvalid";
-
-interface YieldState {
-  flags: bigint;
-  streamYield: bigint;
-  accruedYield: bigint;
-  lastUpdateTimestamp: bigint;
-  lastUpdateBalance: bigint;
+interface Fixture {
+  yieldStreamer: Contract;
+  tokenMock: Contract;
 }
 
-interface RateTier {
-  rate: bigint;
-  cap: bigint;
-}
+/*
+ * Acronyms:
+ * - IB --- initial balance;
+ * - FDi -- full day number i, e.g. FD2 -- full day number 2;
+ * - PFD -- partial first day;
+ * - PLD -- partial last day;
+ * - SY --- stream yield.
+ */
 
-interface YieldRate {
-  tiers: RateTier[];
-  effectiveDay: bigint;
-}
-
-interface YieldResult {
-  partialFirstDayYield: bigint;
-  fullDaysYield: bigint;
-  partialLastDayYield: bigint;
-  partialFirstDayYieldTiered: bigint[];
-  fullDaysYieldTiered: bigint[];
-  partialLastDayYieldTiered: bigint[];
-}
-
-interface AccruePreview {
-  fromTimestamp: bigint;
-  toTimestamp: bigint;
-  balance: bigint;
-  streamYieldBefore: bigint;
-  accruedYieldBefore: bigint;
-  streamYieldAfter: bigint;
-  accruedYieldAfter: bigint;
-  rates: YieldRate[];
-  results: YieldResult[];
-}
-
-interface ClaimPreview {
-  yieldExact: bigint;
-  yieldRounded: bigint;
-  feeExact: bigint;
-  feeRounded: bigint;
-  timestamp: bigint;
-  balance: bigint;
-  rates: bigint[];
-  caps: bigint[];
-}
-
-describe("YieldStreamerTestable", async () => {
+describe("Contract 'YieldStreamer' regarding internal functions", async () => {
   let yieldStreamerTestableFactory: ContractFactory;
 
   before(async () => {
     yieldStreamerTestableFactory = await ethers.getContractFactory("YieldStreamerTestable");
   });
 
-  async function deployContracts(): Promise<{ yieldStreamerTestable: Contract; tokenMock: Contract }> {
+  async function deployContracts(): Promise<Fixture> {
     const tokenMockFactory = await ethers.getContractFactory("ERC20TokenMock");
     const tokenMock = await tokenMockFactory.deploy("Mock Token", "MTK");
     await tokenMock.waitForDeployment();
+    const tokenMockAddress = getAddress(tokenMock);
 
-    const yieldStreamerTestable: Contract = await upgrades.deployProxy(yieldStreamerTestableFactory, [
-      tokenMock.target
-    ]);
-    await yieldStreamerTestable.waitForDeployment();
+    const yieldStreamer: Contract = await upgrades.deployProxy(yieldStreamerTestableFactory, [tokenMockAddress]);
+    await yieldStreamer.waitForDeployment();
 
-    return { yieldStreamerTestable, tokenMock };
+    return { yieldStreamer, tokenMock };
   }
 
   function roundDown(amount: bigint): bigint {
     return (amount / ROUND_FACTOR) * ROUND_FACTOR;
   }
 
-  function roundUp(amount: bigint): bigint {
-    const roundedAmount = roundDown(amount);
-    if (roundedAmount < amount) {
-      return roundedAmount + ROUND_FACTOR;
-    }
-    return roundedAmount;
-  }
-
-  function getSampleYieldRates(count: number): YieldRate[] {
+  function createSampleYieldRates(count: number): YieldRate[] {
     const rates: YieldRate[] = [];
 
     // Build the yield rates array.
     for (let i = 0n; i < count; i++) {
       rates.push({
-        tiers: [
-          {
-            rate: i,
-            cap: i
-          }
-        ],
+        tiers: [{
+          rate: i,
+          cap: i
+        }],
         effectiveDay: i
       });
     }
@@ -131,9 +89,9 @@ describe("YieldStreamerTestable", async () => {
       partialFirstDayYield: result.partialFirstDayYield,
       fullDaysYield: result.fullDaysYield,
       partialLastDayYield: result.partialLastDayYield,
-      partialFirstDayYieldTiered: result.partialFirstDayYieldTiered.map((n: bigint) => n),
-      fullDaysYieldTiered: result.fullDaysYieldTiered.map((n: bigint) => n),
-      partialLastDayYieldTiered: result.partialLastDayYieldTiered.map((n: bigint) => n)
+      partialFirstDayYieldTiered: [...result.partialFirstDayYieldTiered],
+      fullDaysYieldTiered: [...result.fullDaysYieldTiered],
+      partialLastDayYieldTiered: [...result.partialLastDayYieldTiered]
     };
   }
 
@@ -157,10 +115,23 @@ describe("YieldStreamerTestable", async () => {
         partialFirstDayYield: r.partialFirstDayYield,
         fullDaysYield: r.fullDaysYield,
         partialLastDayYield: r.partialLastDayYield,
-        partialFirstDayYieldTiered: r.partialFirstDayYieldTiered.map((n: bigint) => n),
-        fullDaysYieldTiered: r.fullDaysYieldTiered.map((n: bigint) => n),
-        partialLastDayYieldTiered: r.partialLastDayYieldTiered.map((n: bigint) => n)
+        partialFirstDayYieldTiered: [...r.partialFirstDayYieldTiered],
+        fullDaysYieldTiered: [...r.fullDaysYieldTiered],
+        partialLastDayYieldTiered: [...r.partialLastDayYieldTiered]
       }))
+    };
+  }
+
+  function normalizeClaimPreview(claimPreview: ClaimPreview): ClaimPreview {
+    return {
+      yieldExact: claimPreview.yieldExact,
+      yieldRounded: claimPreview.yieldRounded,
+      feeExact: claimPreview.feeExact,
+      feeRounded: claimPreview.feeRounded,
+      timestamp: claimPreview.timestamp,
+      balance: claimPreview.balance,
+      rates: [...claimPreview.rates],
+      caps: [...claimPreview.caps]
     };
   }
 
@@ -168,7 +139,7 @@ describe("YieldStreamerTestable", async () => {
     return (amount * rate * elapsedSeconds) / (DAY * RATE_FACTOR);
   }
 
-  describe("Function 'getAccruePreview()'", async () => {
+  describe("Function '_getAccruePreview()'", async () => {
     interface GetAccruePreviewTestCase {
       description: string;
       state: YieldState;
@@ -179,7 +150,7 @@ describe("YieldStreamerTestable", async () => {
 
     const testCases: GetAccruePreviewTestCase[] = [
       {
-        description: "one yield rate period",
+        description: "Single yield rate period",
         state: {
           lastUpdateTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           lastUpdateBalance: 3000000n,
@@ -230,26 +201,26 @@ describe("YieldStreamerTestable", async () => {
           results: [
             {
               partialFirstDayYield:
-                // PFD Total: 1000000 + 60000 = 1060000
+              // PFD Total: 1000000 + 60000 = 1060000
                 1000000n + // - Stream yield
                 22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
                 15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
                 22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
               fullDaysYield:
-                // FD1 Total: 90600
+              // FD1 Total: 90600
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-                40600n + // - T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + PFD yield)
+                40600n + // - T3: 1% on 3000000 + 1000000 + 60000 for 1 day (IB + SY + PFD)
                 // ------
                 // FD2 Total: 91506
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
               partialLastDayYield:
-                // PLD Total: 23105
+              // PLD Total: 23105
                 7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
                 5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield)
+                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 6 hours (IB + SY + PFD + FD1)
               partialFirstDayYieldTiered: [
                 // PFD Total: 60000
                 simpleYield(1000000n, (RATE_FACTOR / 100n) * 3n, HOUR * 18n), // - PFD T1: 22500
@@ -299,7 +270,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "two yield rate periods",
+        description: "Two yield rate periods",
         state: {
           lastUpdateTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           lastUpdateBalance: 3000000n,
@@ -372,13 +343,13 @@ describe("YieldStreamerTestable", async () => {
           results: [
             {
               partialFirstDayYield:
-                // PFD Total: 1000000 + 60000 = 1060000
+              // PFD Total: 1000000 + 60000 = 1060000
                 1000000n + // - Stream yield
                 22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
                 15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
                 22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
               fullDaysYield:
-                // FD1 Total: 90600
+              // FD1 Total: 90600
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
                 40600n, // -- T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + PFD yield)
@@ -406,15 +377,15 @@ describe("YieldStreamerTestable", async () => {
             {
               partialFirstDayYield: 0n,
               fullDaysYield:
-                // FD2 Total: 91506
+              // FD2 Total: 91506
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
               partialLastDayYield:
-                // PLD Total: 23105
+              // PLD Total: 23105
                 7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
                 5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
               partialFirstDayYieldTiered: [0n, 0n, 0n],
               fullDaysYieldTiered: [
                 // FD2 Total: 91506
@@ -448,7 +419,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "three yield rate periods",
+        description: "Three yield rate periods",
         state: {
           lastUpdateTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           lastUpdateBalance: 3000000n,
@@ -537,13 +508,13 @@ describe("YieldStreamerTestable", async () => {
           results: [
             {
               partialFirstDayYield:
-                // PFD Total: 1000000 + 60000 = 1060000
+              // PFD Total: 1000000 + 60000 = 1060000
                 1000000n + // - Stream yield
                 22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
                 15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
                 22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
               fullDaysYield:
-                // FD1 Total: 90600
+              // FD1 Total: 90600
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
                 40600n, // -- T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + PFD yield)
@@ -571,10 +542,10 @@ describe("YieldStreamerTestable", async () => {
             {
               partialFirstDayYield: 0n,
               fullDaysYield:
-                // FD2 Total: 91506
+              // FD2 Total: 91506
                 30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
                 20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+                41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
               partialLastDayYield: 0n,
               partialFirstDayYieldTiered: [0n, 0n, 0n],
               fullDaysYieldTiered: [
@@ -596,10 +567,10 @@ describe("YieldStreamerTestable", async () => {
               partialFirstDayYield: 0n,
               fullDaysYield: 0n,
               partialLastDayYield:
-                // PLD Total: 23105
+              // PLD Total: 23105
                 7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
                 5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+                10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
               partialFirstDayYieldTiered: [0n, 0n, 0n],
               fullDaysYieldTiered: [0n, 0n, 0n],
               partialLastDayYieldTiered: [
@@ -623,12 +594,12 @@ describe("YieldStreamerTestable", async () => {
     ];
 
     for (const [index, testCase] of testCases.entries()) {
-      it(`Should handle test case ${index + 1}: ${testCase.description}`, async () => {
-        const { yieldStreamerTestable } = await loadFixture(deployContracts);
+      it(`Executes as expected for test case ${index + 1}: ${testCase.description}`, async () => {
+        const { yieldStreamer } = await setUpFixture(deployContracts);
 
         // Add yield rates to contract
         for (let i = 0; i < testCase.rates.length; i++) {
-          await yieldStreamerTestable.addYieldRate(
+          await yieldStreamer.addYieldRate(
             0,
             testCase.rates[i].effectiveDay,
             testCase.rates[i].tiers.map(tier => tier.rate),
@@ -636,23 +607,23 @@ describe("YieldStreamerTestable", async () => {
           );
         }
 
-        // Call the `getAccruePreview()` function
-        const accruePreviewRaw = await yieldStreamerTestable.getAccruePreview(
+        // Call the `_getAccruePreview()` function via the testable contract version
+        const actualAccruePreviewRaw = await yieldStreamer.getAccruePreview(
           testCase.state,
           testCase.rates,
           testCase.currentTimestamp
         );
 
         // Convert the function result to a comparable format
-        const accruePreview = normalizeAccruePreview(accruePreviewRaw);
+        const actualAccruePreview = normalizeAccruePreview(actualAccruePreviewRaw);
 
         // Assertion
-        expect(accruePreview).to.deep.equal(testCase.expected);
+        expect(actualAccruePreview).to.deep.equal(testCase.expected);
       });
     }
   });
 
-  describe("Function 'calculateYield()'", async () => {
+  describe("Function '_calculateYield()'", async () => {
     interface CalculateYieldTestCase {
       description: string;
       params: {
@@ -670,7 +641,7 @@ describe("YieldStreamerTestable", async () => {
 
     const testCases: CalculateYieldTestCase[] = [
       {
-        description: "one yield rate period",
+        description: "Single yield rate period",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           toTimestamp: INITIAL_TIMESTAMP + DAY * 3n + HOUR * 6n,
@@ -699,13 +670,13 @@ describe("YieldStreamerTestable", async () => {
         expected: [
           {
             partialFirstDayYield:
-              // PFD Total: 1000000 + 60000 = 106000
+            // PFD Total: 1000000 + 60000 = 106000
               1000000n + // - Stream yield
               22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
               15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
               22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
             fullDaysYield:
-              // FD1 Total: 90600
+            // FD1 Total: 90600
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
               40600n + // - T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + PFD yield)
@@ -713,12 +684,12 @@ describe("YieldStreamerTestable", async () => {
               // FD2 Total: 91506
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
             partialLastDayYield:
-              // PLD Total: 23105
+            // PLD Total: 23105
               7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
               5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
             partialFirstDayYieldTiered: [
               // PFD Total: 60000
               simpleYield(1000000n, (RATE_FACTOR / 100n) * 3n, HOUR * 18n), // - PFD T1: 22500
@@ -767,7 +738,7 @@ describe("YieldStreamerTestable", async () => {
         ]
       },
       {
-        description: "two yield rate periods",
+        description: "Two yield rate periods",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           toTimestamp: INITIAL_TIMESTAMP + DAY * 3n + HOUR * 6n,
@@ -810,13 +781,13 @@ describe("YieldStreamerTestable", async () => {
         expected: [
           {
             partialFirstDayYield:
-              // PFD Total: 1000000 + 60000 = 1060000
+            // PFD Total: 1000000 + 60000 = 1060000
               1000000n + // - Stream yield
               22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
               15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
               22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
             fullDaysYield:
-              // FD1 Total: 90600
+            // FD1 Total: 90600
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
               40600n, // -- T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + PFD yield)
@@ -844,15 +815,15 @@ describe("YieldStreamerTestable", async () => {
           {
             partialFirstDayYield: 0n,
             fullDaysYield:
-              // FD2 Total: 91506
+            // FD2 Total: 91506
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
             partialLastDayYield:
-              // PLD Total: 23105
+            // PLD Total: 23105
               7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
               5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
             partialFirstDayYieldTiered: [0n, 0n, 0n],
             fullDaysYieldTiered: [
               // FD2 Total: 91506
@@ -885,7 +856,7 @@ describe("YieldStreamerTestable", async () => {
         ]
       },
       {
-        description: "three yield rate periods",
+        description: "Three yield rate periods",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           toTimestamp: INITIAL_TIMESTAMP + DAY * 3n + HOUR * 6n,
@@ -936,13 +907,13 @@ describe("YieldStreamerTestable", async () => {
         expected: [
           {
             partialFirstDayYield:
-              // PFD Total: 1000000 + 60000 = 1060000
+            // PFD Total: 1000000 + 60000 = 1060000
               1000000n + // - Stream yield
               22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
               15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
               22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
             fullDaysYield:
-              // FD1 Total: 90600
+            // FD1 Total: 90600
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
               40600n, // -- T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + PFD yield)
@@ -970,10 +941,10 @@ describe("YieldStreamerTestable", async () => {
           {
             partialFirstDayYield: 0n,
             fullDaysYield:
-              // FD2 Total: 91506
+            // FD2 Total: 91506
               30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
               20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + PFD yield + FD1 yield)
+              41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + PFD + FD1)
             partialLastDayYield: 0n,
             partialFirstDayYieldTiered: [0n, 0n, 0n],
             fullDaysYieldTiered: [
@@ -995,10 +966,10 @@ describe("YieldStreamerTestable", async () => {
             partialFirstDayYield: 0n,
             fullDaysYield: 0n,
             partialLastDayYield:
-              // PLD Total: 23105
+            // PLD Total: 23105
               7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
               5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + PFD yield + FD1 yield + FD2 yield)
+              10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + PFD + FD1 + FD2)
             partialFirstDayYieldTiered: [0n, 0n, 0n],
             fullDaysYieldTiered: [0n, 0n, 0n],
             partialLastDayYieldTiered: [
@@ -1021,12 +992,12 @@ describe("YieldStreamerTestable", async () => {
     ];
 
     for (const [index, testCase] of testCases.entries()) {
-      it(`Should handle test case ${index + 1}: ${testCase.description}`, async () => {
-        const { yieldStreamerTestable } = await loadFixture(deployContracts);
+      it(`Executes as expected for test case ${index + 1}: ${testCase.description}`, async () => {
+        const { yieldStreamer } = await setUpFixture(deployContracts);
 
         // Add yield rates to contract
         for (let i = 0; i < testCase.rates.length; i++) {
-          await yieldStreamerTestable.addYieldRate(
+          await yieldStreamer.addYieldRate(
             0,
             testCase.rates[i].effectiveDay,
             testCase.rates[i].tiers.map(tier => tier.rate),
@@ -1034,8 +1005,8 @@ describe("YieldStreamerTestable", async () => {
           );
         }
 
-        // Call the `calculateYield()` function
-        const yieldResultsRaw = await yieldStreamerTestable.calculateYield(testCase.params, testCase.rates);
+        // Call the `_calculateYield()` function via the testable contract version
+        const yieldResultsRaw = await yieldStreamer.calculateYield(testCase.params, testCase.rates);
 
         // Convert the function result to a comparable format
         const yieldResults = yieldResultsRaw.map(normalizeYieldResult);
@@ -1046,7 +1017,7 @@ describe("YieldStreamerTestable", async () => {
     }
   });
 
-  describe("Function 'compoundYield()'", async () => {
+  describe("Function '_compoundYield()'", async () => {
     interface CompoundYieldTestCase {
       description: string;
       params: {
@@ -1070,7 +1041,7 @@ describe("YieldStreamerTestable", async () => {
 
     const testCases: CompoundYieldTestCase[] = [
       {
-        description: "single partial day: D1:00:00:00 - D1:01:00:00",
+        description: "Single partial day: D1:00:00:00 - D1:01:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP,
           toTimestamp: INITIAL_TIMESTAMP + HOUR,
@@ -1084,11 +1055,11 @@ describe("YieldStreamerTestable", async () => {
         },
         expected: {
           partialFirstDayYield:
-            // PFD Total: 1000000
+          // PFD Total: 1000000
             1000000n, // - Stream yield
           fullDaysYield: 0n,
           partialLastDayYield:
-            // PLD Total: 3749
+          // PLD Total: 3749
             1250n + // - T1: 3% on 1000000 for 1 hour (Initial balance)
             833n + // -- T2: 2% on 1000000 for 1 hour (Initial balance)
             1666n, // -- T3: 1% on (3000000 + 1000000) for 1 hour (Initial balance + Stream yield)
@@ -1108,7 +1079,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "single partial day: D1:01:00:00 - D1:23:00:00",
+        description: "Single partial day: D1:01:00:00 - D1:23:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP + HOUR,
           toTimestamp: INITIAL_TIMESTAMP + DAY - HOUR,
@@ -1124,7 +1095,7 @@ describe("YieldStreamerTestable", async () => {
           partialFirstDayYield: 0n,
           fullDaysYield: 0n,
           partialLastDayYield:
-            // PLD Total: 1000000 + 73333 = 1073333
+          // PLD Total: 1000000 + 73333 = 1073333
             1000000n + // - Stream yield
             27500n + // --- T1: 3% on 1000000 for 22 hours (Initial balance)
             18333n + // --- T2: 2% on 1000000 for 22 hours (Initial balance)
@@ -1140,7 +1111,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "single partial day: D1:23:00:00 - D2:00:00:00",
+        description: "Single partial day: D1:23:00:00 - D2:00:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP + DAY - HOUR,
           toTimestamp: INITIAL_TIMESTAMP + DAY,
@@ -1156,7 +1127,7 @@ describe("YieldStreamerTestable", async () => {
           partialFirstDayYield: 0n,
           fullDaysYield: 0n,
           partialLastDayYield:
-            // PLD Total: 1000000 + 3333 = 1003333
+          // PLD Total: 1000000 + 3333 = 1003333
             1000000n + // - Stream yield
             1250n + // ---- T1: 3% on 1000000 for 1 hour (Initial balance)
             833n + // ----- T2: 2% on 1000000 for 1 hour (Initial balance)
@@ -1172,7 +1143,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "single full day: D1:00:00:00 - D2:00:00:00",
+        description: "Single full day: D1:00:00:00 - D2:00:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP,
           toTimestamp: INITIAL_TIMESTAMP + DAY,
@@ -1186,10 +1157,10 @@ describe("YieldStreamerTestable", async () => {
         },
         expected: {
           partialFirstDayYield:
-            // FDP Total: 1000000
+          // FDP Total: 1000000
             1000000n, // - Stream yield
           fullDaysYield:
-            // FD1 Total: 90000
+          // FD1 Total: 90000
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
             40000n, // -- T3: 1% on 3000000 + 1000000 for 1 day (Initial balance + Stream yield)
@@ -1210,7 +1181,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "two full days: D1:00:00:00 - D3:00:00:00",
+        description: "Two full days: D1:00:00:00 - D3:00:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP,
           toTimestamp: INITIAL_TIMESTAMP + DAY * 2n,
@@ -1224,10 +1195,10 @@ describe("YieldStreamerTestable", async () => {
         },
         expected: {
           partialFirstDayYield:
-            // FDP Total: 1000000
+          // FDP Total: 1000000
             1000000n, // - Stream yield
           fullDaysYield:
-            // FD1 Total: 90000
+          // FD1 Total: 90000
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
             40000n + // - T3: 1% on 3000000 + 1000000 for 1 day (Initial balance + Stream yield)
@@ -1264,7 +1235,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "two full days AND first partial day: D1:06:00:00 - D4:00:00:00",
+        description: "Two full days AND first partial day: D1:06:00:00 - D4:00:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           toTimestamp: INITIAL_TIMESTAMP + DAY * 3n,
@@ -1278,14 +1249,14 @@ describe("YieldStreamerTestable", async () => {
         },
         expected: {
           partialFirstDayYield:
-            // FDP Total: 1000000 + 60000 = 1060000
+          // FDP Total: 1000000 + 60000 = 1060000
             1000000n + // - Stream yield
             22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
             15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
             22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
           // PD0 Total: 60000
           fullDaysYield:
-            // FD1 Total: 90600
+          // FD1 Total: 90600
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
             40600n + // - T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + FDP yield)
@@ -1293,7 +1264,7 @@ describe("YieldStreamerTestable", async () => {
             // FD2 Total: 91506
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-            41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + FDP yield + FD1 yield)
+            41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + FDP + FD1)
           partialLastDayYield: 0n,
           partialFirstDayYieldTiered: [
             // PFD Total: 60000
@@ -1329,7 +1300,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "two full days AND last partial day: D1:00:00:00 - D4:06:00:00",
+        description: "Two full days AND last partial day: D1:00:00:00 - D4:06:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP,
           toTimestamp: INITIAL_TIMESTAMP + DAY * 2n + HOUR * 6n,
@@ -1343,10 +1314,10 @@ describe("YieldStreamerTestable", async () => {
         },
         expected: {
           partialFirstDayYield:
-            // FDP Total: 1000000
+          // FDP Total: 1000000
             1000000n, // - Stream yield
           fullDaysYield:
-            // FD1 Total: 90000
+          // FD1 Total: 90000
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
             40000n + // - T3: 1% on 3000000 + 1000000 for 1 day (Initial balance + Stream yield)
@@ -1356,10 +1327,10 @@ describe("YieldStreamerTestable", async () => {
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
             40900n, // -- T3: 1% on 3000000 + 1000000 + 90000 for 1 day (Initial balance + Stream yield + FD1 yield)
           partialLastDayYield:
-            // LDP Total: 22952
+          // LDP Total: 22952
             7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
             5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-            10452n, // - T3: 1% on 3000000 + 1000000 + 90000 + 90900 for 6 hours (Initial balance + Stream yield + FD1 yield + FD2 yield)
+            10452n, // - T3: 1% on 3000000 + 1000000 + 90000 + 90900 for 6 hours (IB + SY + FD1 + FD2)
           partialFirstDayYieldTiered: [0n, 0n, 0n],
           fullDaysYieldTiered: [
             // FD1 + FD2 Total: 180900
@@ -1399,7 +1370,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "two full days AND first partial day AND last partial day: D1:06:00:00 - D4:06:00:00",
+        description: "Two full days AND first partial day AND last partial day: D1:06:00:00 - D4:06:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           toTimestamp: INITIAL_TIMESTAMP + DAY * 3n + HOUR * 6n,
@@ -1413,13 +1384,13 @@ describe("YieldStreamerTestable", async () => {
         },
         expected: {
           partialFirstDayYield:
-            // PFD Total: 1000000 + 60000 = 1060000
+          // PFD Total: 1000000 + 60000 = 1060000
             1000000n + // - Stream yield
             22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
             15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
             22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
           fullDaysYield:
-            // FD1 Total: 90600
+          // FD1 Total: 90600
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
             40600n + // - T3: 1% on 3000000 + 1000000 + 60000 for 1 day (Initial balance + Stream yield + FDP yield)
@@ -1427,12 +1398,12 @@ describe("YieldStreamerTestable", async () => {
             // FD2 Total: 91506
             30000n + // - T1: 3% on 1000000 for 1 day (Initial balance)
             20000n + // - T2: 2% on 1000000 for 1 day (Initial balance)
-            41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (Initial balance + Stream yield + FDP yield + FD1 yield)
+            41506n, // -- T3: 1% on 3000000 + 1000000 + 60000 + 90600 for 1 day (IB + SY + FDP + FD1)
           partialLastDayYield:
-            // PLD Total: 23105
+          // PLD Total: 23105
             7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
             5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
-            10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (Initial balance + Stream yield + FDP yield + FD1 yield + FD2 yield)
+            10605n, // - T3: 1% on 3000000 + 1000000 + 60000 + 90600 + 91506 for 6 hours (IB + SY + FDP + FD1 + FD2)
           partialFirstDayYieldTiered: [
             // PFD Total: 60000
             simpleYield(1000000n, (RATE_FACTOR / 100n) * 3n, HOUR * 18n), // - PFD T1: 22500
@@ -1480,7 +1451,7 @@ describe("YieldStreamerTestable", async () => {
         }
       },
       {
-        description: "two partial days: D1:06:00:00 - D2:06:00:00",
+        description: "Two partial days: D1:06:00:00 - D2:06:00:00",
         params: {
           fromTimestamp: INITIAL_TIMESTAMP + HOUR * 6n,
           toTimestamp: INITIAL_TIMESTAMP + DAY + HOUR * 6n,
@@ -1494,14 +1465,14 @@ describe("YieldStreamerTestable", async () => {
         },
         expected: {
           partialFirstDayYield:
-            // FDP Total: 1000000 + 60000 = 1060000
+          // FDP Total: 1000000 + 60000 = 1060000
             1000000n + // - Stream yield
             22500n + // --- T1: 3% on 1000000 for 18 hours (Initial balance)
             15000n + // --- T2: 2% on 2000000 for 18 hours (Initial balance)
             22500n, // ---- T3: 1% on 3000000 for 18 hours (Initial balance)
           fullDaysYield: 0n,
           partialLastDayYield:
-            // PLD Total: 22650
+          // PLD Total: 22650
             7500n + // - T1: 3% on 1000000 for 6 hours (Initial balance)
             5000n + // - T2: 2% on 1000000 for 6 hours (Initial balance)
             10150n, // - T3: 1% on 3000000 + 1000000 + 60000 for 6 hours (Initial balance + Stream yield + FDP yield)
@@ -1529,18 +1500,18 @@ describe("YieldStreamerTestable", async () => {
     ];
 
     for (const [index, testCase] of testCases.entries()) {
-      it(`Should handle test case ${index + 1}: ${testCase.description}`, async () => {
-        const { yieldStreamerTestable } = await loadFixture(deployContracts);
+      it(`Executes as expected for test case  ${index + 1}: ${testCase.description}`, async () => {
+        const { yieldStreamer } = await setUpFixture(deployContracts);
 
         if (testCase.shouldRevert) {
-          // Call the `compoundYield()` function and expect it to revert
-          await expect(yieldStreamerTestable.compoundYield(testCase.params)).to.be.revertedWithCustomError(
-            yieldStreamerTestable,
+          // Call the `_compoundYield()` function via the testable contract version and expect it to revert
+          await expect(yieldStreamer.compoundYield(testCase.params)).to.be.revertedWithCustomError(
+            yieldStreamer,
             testCase.revertMessage!
           );
         } else {
-          // Call the `compoundYield()` function and expect it to return
-          const yieldResultRaw = await yieldStreamerTestable.compoundYield(testCase.params);
+          // Call the `_compoundYield()` function via the testable contract version and expect it to return
+          const yieldResultRaw = await yieldStreamer.compoundYield(testCase.params);
 
           // Convert the function result to a comparable format
           const yieldResult = normalizeYieldResult(yieldResultRaw);
@@ -1552,7 +1523,7 @@ describe("YieldStreamerTestable", async () => {
     }
   });
 
-  describe("Function 'calculateTieredYield()'", async () => {
+  describe("Function '_calculateTieredYield()'", async () => {
     interface CalculateTieredYieldTestCase {
       description: string;
       amount: bigint;
@@ -1563,14 +1534,14 @@ describe("YieldStreamerTestable", async () => {
 
     const testCases: CalculateTieredYieldTestCase[] = [
       {
-        description: "single tier - zero cap - 1 hour",
+        description: "Single tier - zero cap - 1 hour",
         amount: 650000000n,
         tiers: [{ rate: (RATE_FACTOR / 100n) * 5n, cap: 0n }],
         elapsedSeconds: HOUR,
         expectedTieredYield: [((RATE_FACTOR / 100n) * 5n * 650000000n * HOUR) / (DAY * RATE_FACTOR)]
       },
       {
-        description: "multiple tiers - total cap less than amount - 1 hour",
+        description: "Multiple tiers - total cap less than amount - 1 hour",
         amount: 650000000n,
         tiers: [
           { rate: (RATE_FACTOR / 100n) * 5n, cap: 300000000n },
@@ -1587,7 +1558,7 @@ describe("YieldStreamerTestable", async () => {
         ]
       },
       {
-        description: "multiple tiers - total cap greater than amount - 1 hour",
+        description: "Multiple tiers - total cap greater than amount - 1 hour",
         amount: 450000000n,
         tiers: [
           { rate: (RATE_FACTOR / 100n) * 5n, cap: 300000000n },
@@ -1604,7 +1575,7 @@ describe("YieldStreamerTestable", async () => {
         ]
       },
       {
-        description: "multiple tiers - total cap greater than amount - 1 day + 3 hours",
+        description: "Multiple tiers - total cap greater than amount - 1 day + 3 hours",
         amount: 450000000n,
         tiers: [
           { rate: (RATE_FACTOR / 100n) * 5n, cap: 300000000n },
@@ -1621,7 +1592,7 @@ describe("YieldStreamerTestable", async () => {
         ]
       },
       {
-        description: "multiple tiers - total cap greater than amount - 2 days + 18 hours",
+        description: "Multiple tiers - total cap greater than amount - 2 days + 18 hours",
         amount: 450000000n,
         tiers: [
           { rate: (RATE_FACTOR / 100n) * 5n, cap: 300000000n },
@@ -1638,7 +1609,7 @@ describe("YieldStreamerTestable", async () => {
         ]
       },
       {
-        description: "multiple tiers - zero rates present in the tiers array",
+        description: "Multiple tiers - zero rates present in the tiers array",
         amount: 650000000n,
         tiers: [
           { rate: 0n, cap: 300000000n },
@@ -1655,7 +1626,7 @@ describe("YieldStreamerTestable", async () => {
         ]
       },
       {
-        description: "multiple tiers - zero elapsed seconds",
+        description: "Multiple tiers - zero elapsed seconds",
         amount: 650000000n,
         tiers: [
           { rate: (RATE_FACTOR / 100n) * 5n, cap: 300000000n },
@@ -1667,7 +1638,7 @@ describe("YieldStreamerTestable", async () => {
         expectedTieredYield: [0n, 0n, 0n, 0n]
       },
       {
-        description: "multiple tiers - zero amount",
+        description: "Nultiple tiers - zero amount",
         amount: 0n,
         tiers: [
           { rate: (RATE_FACTOR / 100n) * 5n, cap: 300000000n },
@@ -1681,21 +1652,22 @@ describe("YieldStreamerTestable", async () => {
     ];
 
     for (const [index, testCase] of testCases.entries()) {
-      it(`Should handle test case ${index + 1}: ${testCase.description}`, async () => {
-        const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+      it(`Executes as expected for test case ${index + 1}: ${testCase.description}`, async () => {
+        const { yieldStreamer } = await setUpFixture(deployContracts);
 
         // Calculate the expected yield
         const expectedTotalYield = testCase.expectedTieredYield.reduce((acc, curr) => acc + curr, 0n);
 
-        // Call the `calculateTieredYield` function
-        const resultRaw = await yieldStreamerTestable.calculateTieredYield(
+        // Call the `_calculateTieredYield()` function via the testable contract version
+        const resultRaw = await yieldStreamer.calculateTieredYield(
           testCase.amount,
           testCase.elapsedSeconds,
           testCase.tiers
         );
 
         // Convert the function result to a comparable format
-        const [totalYield, tieredYield] = resultRaw.map((n: bigint) => n);
+        const totalYield: bigint = resultRaw[0];
+        const tieredYield: bigint[] = resultRaw[1];
 
         // Assertion
         expect(tieredYield).to.deep.equal(testCase.expectedTieredYield);
@@ -1704,66 +1676,66 @@ describe("YieldStreamerTestable", async () => {
     }
   });
 
-  describe("Function 'calculateSimpleYield()'", async () => {
-    it("Should return zero when rate is zero", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+  describe("Function '_calculateSimpleYield()'", async () => {
+    it("Returns zero when the provided rate is zero", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       const amount = 1000n;
       const rate = 0n; // Zero rate
-      const elapsedSeconds = HOUR;
+      const elapsedSeconds = (HOUR);
 
-      // Call the `calculateSimpleYield` function
-      const yieldAmount = await yieldStreamerTestable.calculateSimpleYield(amount, rate, elapsedSeconds);
+      // Call the `_calculateSimpleYield()` function via the testable contract version
+      const yieldAmount = await yieldStreamer.calculateSimpleYield(amount, rate, elapsedSeconds);
 
       // Assertion
       expect(yieldAmount).to.equal(0);
     });
 
-    it("Should return zero when amount is zero", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Returns zero when the provided amount is zero", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       const amount = 0n; // Zero amount
       const rate = 1000n;
-      const elapsedSeconds = HOUR;
+      const elapsedSeconds = (HOUR);
 
-      // Call the `calculateSimpleYield` function
-      const yieldAmount = await yieldStreamerTestable.calculateSimpleYield(amount, rate, elapsedSeconds);
+      // Call the `_calculateSimpleYield()` function via the testable contract version
+      const yieldAmount = await yieldStreamer.calculateSimpleYield(amount, rate, elapsedSeconds);
 
       // Assertion
       expect(yieldAmount).to.equal(0);
     });
 
-    it("Should return zero when elapsedSeconds is zero", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Returns zero when the provided 'elapsedSeconds' parameter is zero", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       const amount = 1000n;
       const rate = 1000n;
       const elapsedSeconds = 0n; // Zero elapsed seconds
 
-      // Call the `calculateSimpleYield` function
-      const yieldAmount = await yieldStreamerTestable.calculateSimpleYield(amount, rate, elapsedSeconds);
+      // Call the `_calculateSimpleYield()` function via the testable contract version
+      const yieldAmount = await yieldStreamer.calculateSimpleYield(amount, rate, elapsedSeconds);
 
       // Assertion
       expect(yieldAmount).to.equal(0);
     });
 
-    it("Should calculate the yield correctly when elapsed seconds is equal to 1 day", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Calculates the yield correctly when provided elapsed seconds are equal to 1 day", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       const amount = 123456789n;
       const rate = 123456789n;
       const elapsedSeconds = DAY;
       const expectedYield = (amount * rate * elapsedSeconds) / (DAY * RATE_FACTOR);
 
-      // Call the `calculateSimpleYield` function
-      const yieldAmount = await yieldStreamerTestable.calculateSimpleYield(amount, rate, elapsedSeconds);
+      // Call the `_calculateSimpleYield()` function via the testable contract version
+      const yieldAmount = await yieldStreamer.calculateSimpleYield(amount, rate, elapsedSeconds);
 
       // Assertion
       expect(yieldAmount).to.equal(expectedYield);
     });
 
-    it("Should calculate the yield correctly when elapsed seconds is less than 1 day", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Сalculates the yield correctly when provided elapsed seconds are less than 1 day", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       const amount = 123456789n;
       const rate = 123456789n;
@@ -1771,31 +1743,31 @@ describe("YieldStreamerTestable", async () => {
       const expectedYield = (amount * rate * elapsedSeconds) / (DAY * RATE_FACTOR);
 
       // Call the `calculateSimpleYield` function
-      const yieldAmount = await yieldStreamerTestable.calculateSimpleYield(amount, rate, elapsedSeconds);
+      const yieldAmount = await yieldStreamer.calculateSimpleYield(amount, rate, elapsedSeconds);
 
       // Assertion
       expect(yieldAmount).to.equal(expectedYield);
     });
 
-    it("Should calculate the yield correctly when elapsed seconds is greater than 1 day", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Calculates the yield correctly when provided elapsed seconds are greater than 1 day", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       const amount = 123456789n;
       const rate = 123456789n;
       const elapsedSeconds = DAY * 2n + HOUR * 3n;
       const expectedYield = (amount * rate * elapsedSeconds) / (DAY * RATE_FACTOR);
 
-      // Call the `calculateSimpleYield` function
-      const yieldAmount = await yieldStreamerTestable.calculateSimpleYield(amount, rate, elapsedSeconds);
+      // Call the `_calculateSimpleYield()` function via the testable contract version
+      const yieldAmount = await yieldStreamer.calculateSimpleYield(amount, rate, elapsedSeconds);
 
       // Assertion
       expect(yieldAmount).to.equal(expectedYield);
     });
   });
 
-  describe("Function 'inRangeYieldRates()'", async () => {
-    it("Should return indices (0, 0) when there is only one yield rate in the array", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+  describe("Function '_inRangeYieldRates()'", async () => {
+    it("Returns indices (0, 0) when there is only one yield rate in the array", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       // Set up `fromTimestamp` and `toTimestamp`
       const fromTimestamp = 100n;
@@ -1810,8 +1782,8 @@ describe("YieldStreamerTestable", async () => {
         }
       ];
 
-      // Call the `inRangeYieldRates` function
-      const [startIndex, endIndex] = await yieldStreamerTestable.inRangeYieldRates(rates, fromTimestamp, toTimestamp);
+      // Call the `_calculateSimpleYield()` function via the testable contract version
+      const [startIndex, endIndex] = await yieldStreamer.inRangeYieldRates(rates, fromTimestamp, toTimestamp);
 
       // Assertion
       expect(startIndex).to.equal(0);
@@ -1853,7 +1825,7 @@ describe("YieldStreamerTestable", async () => {
     const testCases: InRangeYieldRatesTestCase[] = [
       {
         description:
-          "`fromTimestamp` is 2s before the second rate effective day, `toTimestamp` is 1s before the second rate effective day",
+          "`fromTimestamp` is 2s before the second rate eff. day, `toTimestamp` is 1s before the second rate eff. day",
         fromTimestamp: -2n + secondRateEffectiveDay * DAY,
         toTimestamp: -1n + secondRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1861,7 +1833,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is exactly on the second rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is exactly on the second rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: 0n + secondRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1869,7 +1841,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is 1s after the second rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is 1s after the second rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: 1n + secondRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1877,7 +1849,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is 1s before the third rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is 1s before the third rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: -1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1885,7 +1857,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is exactly on the third rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is exactly on the third rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: 0n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1893,7 +1865,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the second rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is 1s before the second rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: -1n + secondRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 0,
@@ -1901,7 +1873,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is exactly on the second rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is exactly on the second rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: 0n + secondRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
@@ -1909,7 +1881,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s after the second rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is 1s after the second rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: 1n + secondRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
@@ -1917,7 +1889,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s before the third rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is 1s before the third rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: -1n + thirdRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
@@ -1925,7 +1897,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is exactly on the third rate effective day, `toTimestamp` is 1s after the third rate effective day",
+          "`fromTimestamp` is exactly on the third rate eff. day, `toTimestamp` is 1s after the third rate eff. day",
         fromTimestamp: 0n + thirdRateEffectiveDay * DAY,
         toTimestamp: 1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 2,
@@ -1933,7 +1905,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is 1s after the third rate effective day, `toTimestamp` is 2s after the third rate effective day",
+          "`fromTimestamp` is 1s after the third rate eff. day, `toTimestamp` is 2s after the third rate eff. day",
         fromTimestamp: 1n + thirdRateEffectiveDay * DAY,
         toTimestamp: 2n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 2,
@@ -1941,7 +1913,7 @@ describe("YieldStreamerTestable", async () => {
       },
       {
         description:
-          "`fromTimestamp` is exactly on the second rate effective day, `toTimestamp` is 1s before the third rate effective day",
+          "`fromTimestamp` is exactly on the second rate eff. day, `toTimestamp` is 1s before the third rate eff. day",
         fromTimestamp: 0n + secondRateEffectiveDay * DAY,
         toTimestamp: -1n + thirdRateEffectiveDay * DAY,
         expectedStartIndex: 1,
@@ -1950,11 +1922,11 @@ describe("YieldStreamerTestable", async () => {
     ];
 
     for (const [index, testCase] of testCases.entries()) {
-      it(`Should handle test case ${index + 1}: ${testCase.description}.`, async () => {
-        const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+      it(`Executes as expected for test case  ${index + 1}: ${testCase.description}.`, async () => {
+        const { yieldStreamer } = await setUpFixture(deployContracts);
 
-        // Call the `inRangeYieldRates` function for the given test case
-        const [startIndex, endIndex] = await yieldStreamerTestable.inRangeYieldRates(
+        // Call the `_inRangeYieldRates()` function via the testable contract version for the given test case
+        const [startIndex, endIndex] = await yieldStreamer.inRangeYieldRates(
           testRates,
           testCase.fromTimestamp,
           testCase.toTimestamp
@@ -1966,49 +1938,49 @@ describe("YieldStreamerTestable", async () => {
       });
     }
 
-    it("Should revert when the `fromTimestamp` is greater than the `toTimestamp`", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Is reverted when `fromTimestamp` is greater than `toTimestamp`", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       // Set up `fromTimestamp` and `toTimestamp`
       const fromTimestamp = 101n;
       const toTimestamp = 100n;
 
-      // Call the `inRangeYieldRates` function
+      // Call the `_inRangeYieldRates()` function via the testable contract version
       await expect(
-        yieldStreamerTestable.inRangeYieldRates(testRates, fromTimestamp, toTimestamp)
-      ).to.be.revertedWithCustomError(yieldStreamerTestable, REVERT_ERROR_IF_TIME_RANGE_IS_INVALID);
+        yieldStreamer.inRangeYieldRates(testRates, fromTimestamp, toTimestamp)
+      ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_TimeRangeIsInvalid);
     });
 
-    it("Should revert when the `fromTimestamp` is equal to the `toTimestamp`", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Is reverted when `fromTimestamp` is equal to `toTimestamp`", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       // Set up `fromTimestamp` and `toTimestamp`
       const fromTimestamp = 100n;
       const toTimestamp = 100n;
 
-      // Call the `inRangeYieldRates` function
+      // Call the `_inRangeYieldRates()` function via the testable contract version
       await expect(
-        yieldStreamerTestable.inRangeYieldRates(testRates, fromTimestamp, toTimestamp)
-      ).to.be.revertedWithCustomError(yieldStreamerTestable, REVERT_ERROR_IF_TIME_RANGE_IS_INVALID);
+        yieldStreamer.inRangeYieldRates(testRates, fromTimestamp, toTimestamp)
+      ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_TimeRangeIsInvalid);
     });
 
-    it("Should revert when there are no yield rates in the array", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Is reverted when there are no yield rates in the array", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       // Set up `fromTimestamp` and `toTimestamp`
       const fromTimestamp = 100n;
       const toTimestamp = 200n;
 
-      // Call the `inRangeYieldRates` function
+      // Call the `_inRangeYieldRates()` function via the testable contract version
       await expect(
-        yieldStreamerTestable.inRangeYieldRates([], fromTimestamp, toTimestamp)
-      ).to.be.revertedWithCustomError(yieldStreamerTestable, REVERT_ERROR_IF_YIELD_RATE_ARRAY_IS_EMPTY);
+        yieldStreamer.inRangeYieldRates([], fromTimestamp, toTimestamp)
+      ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateArrayIsEmpty);
     });
   });
 
-  describe("Function 'aggregateYield()'", async () => {
-    it("Should correctly aggregate a single yield result", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+  describe("Function '_aggregateYield()'", async () => {
+    it("Correctly aggregates a single yield result", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       // Set up a single yield result with sample values
       const yieldResult: YieldResult = {
@@ -2025,16 +1997,16 @@ describe("YieldStreamerTestable", async () => {
       const expectedAccruedYield = yieldResult.partialFirstDayYield + yieldResult.fullDaysYield;
       const expectedStreamYield = yieldResult.partialLastDayYield;
 
-      // Call the `aggregateYield` function with the yield results
-      const [accruedYield, streamYield] = await yieldStreamerTestable.aggregateYield(yieldResults);
+      // Call the `_aggregateYield()` function via the testable contract version with the yield results
+      const [accruedYield, streamYield] = await yieldStreamer.aggregateYield(yieldResults);
 
       // Assertion
       expect(accruedYield).to.equal(expectedAccruedYield);
       expect(streamYield).to.equal(expectedStreamYield);
     });
 
-    it("Should correctly aggregate multiple yield results", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Correctly aggregates multiple yield results", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       // Set up multiple yield results with sample values
       const yieldResults: YieldResult[] = [
@@ -2080,20 +2052,20 @@ describe("YieldStreamerTestable", async () => {
       // Calculate expected `streamYield` according to the function logic
       const expectedStreamYield = yieldResults[yieldResults.length - 1].partialLastDayYield;
 
-      // Call the `aggregateYield` function with the yield results
-      const [accruedYield, streamYield] = await yieldStreamerTestable.aggregateYield(yieldResults);
+      // Call the `_aggregateYield()` function via the testable contract version with the yield results
+      const [accruedYield, streamYield] = await yieldStreamer.aggregateYield(yieldResults);
 
       // Assertion
       expect(accruedYield).to.equal(expectedAccruedYield);
       expect(streamYield).to.equal(expectedStreamYield);
     });
 
-    it("Should correctly aggregate an empty yield results array", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Correctly aggregates an empty yield results array", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      // Call the `aggregateYield` function with an empty array
+      // Call the `_aggregateYield()` function via the testable contract version with an empty array
       const yieldResults: YieldResult[] = [];
-      const [accruedYield, streamYield] = await yieldStreamerTestable.aggregateYield(yieldResults);
+      const [accruedYield, streamYield] = await yieldStreamer.aggregateYield(yieldResults);
 
       // Assertion
       expect(accruedYield).to.equal(0);
@@ -2101,102 +2073,80 @@ describe("YieldStreamerTestable", async () => {
     });
   });
 
-  describe("Function 'blockTimestamp()'", async () => {
-    it("Should return the adjusted timestamp as expected", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+  describe("Function '_effectiveTimestamp()'", async () => {
+    it("Returns the effective timestamp as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const currentTimestamp = BigInt(await time.latest());
-      const expectedBlockTimestamp = currentTimestamp - NEGATIVE_TIME_SHIFT;
-      const blockTimestamp = await yieldStreamerTestable.blockTimestamp();
-
-      expect(blockTimestamp).to.equal(expectedBlockTimestamp);
-    });
-  });
-
-  describe("Function 'effectiveTimestamp()'", async () => {
-    it("Should return the effective timestamp as expected", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
-
-      const timestamps = [
-        0n,
-        1n,
-        50n,
-        86399n,
-        86400n,
-        86401n,
-        2n * 86400n,
-        3n * 86400n + 12345n,
-        1660135722n
-      ];
+      const timestamps = [0n, 1n, 50n, 86399n, 86400n, 86401n, 2n * 86400n, 3n * 86400n + 12345n, 1660135722n];
 
       for (const timestamp of timestamps) {
-        const effectiveTimestamp = await yieldStreamerTestable.effectiveTimestamp(timestamp);
+        const effectiveTimestamp = await yieldStreamer.effectiveTimestamp(timestamp); // Call via the testable version
         const expectedEffectiveTimestamp = (timestamp / DAY) * DAY;
         expect(effectiveTimestamp).to.equal(expectedEffectiveTimestamp);
       }
     });
   });
 
-  describe("Function 'truncateArray()'", async () => {
-    it("Should return the full array when `startIndex` is 0 and `endIndex` is `rates.length - 1`", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+  describe("Function '_truncateArray()'", async () => {
+    it("Returns the full array when `startIndex` is 0 and `endIndex` is `rates.length - 1`", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const rates = getSampleYieldRates(5);
+      const rates = createSampleYieldRates(5);
 
-      // Call the `truncateArray` function
-      const yieldRatesRaw = await yieldStreamerTestable.truncateArray(0, rates.length - 1, rates);
+      // Call the `truncateArray` function via the testable contract version
+      const yieldRatesRaw = await yieldStreamer.truncateArray(0, rates.length - 1, rates);
       const yieldRates: YieldRate[] = yieldRatesRaw.map(normalizeYieldRate);
 
       // Assertion
       expect(yieldRates).to.deep.equal(rates);
     });
 
-    it("Should return a truncated array when `startIndex` and `endIndex` are different (internal range)", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Returns a truncated array when `startIndex` and `endIndex` are different (internal range)", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const rates = getSampleYieldRates(5);
+      const rates = createSampleYieldRates(5);
 
-      // Call the `truncateArray` function
-      const yieldRatesRaw = await yieldStreamerTestable.truncateArray(1, 3, rates);
-      const yieldRates: YieldRate[] = yieldRatesRaw.map(normalizeYieldRate);
+      // Call the `_truncateArray()` function
+      const yieldRatesRaw = await yieldStreamer.truncateArray(1, 3, rates);
+      const yieldRates: YieldRate[] = yieldRatesRaw.map(normalizeYieldRate); // Call via the testable version
 
       // Assertion
       expect(yieldRates).to.deep.equal(rates.slice(1, 4));
     });
 
-    it("Should return a truncated array when `startIndex` and `endIndex` are different (include the first element)", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Return a truncated array when `startIndex` != `endIndex` (include the first element)", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const rates = getSampleYieldRates(5);
+      const rates = createSampleYieldRates(5);
 
       // Call the `truncateArray` function
-      const yieldRatesRaw = await yieldStreamerTestable.truncateArray(0, 3, rates);
+      const yieldRatesRaw = await yieldStreamer.truncateArray(0, 3, rates); // Call via the testable version
       const yieldRates: YieldRate[] = yieldRatesRaw.map(normalizeYieldRate);
 
       // Assertion
       expect(yieldRates).to.deep.equal(rates.slice(0, 4));
     });
 
-    it("Should return a truncated array when `startIndex` and `endIndex` are different (include the last element)", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Returns a truncated array when `startIndex` != `endIndex` (include the last element)", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const rates = getSampleYieldRates(5);
+      const rates = createSampleYieldRates(5);
 
       // Call the `truncateArray` function
-      const yieldRatesRaw = await yieldStreamerTestable.truncateArray(1, 4, rates);
+      const yieldRatesRaw = await yieldStreamer.truncateArray(1, 4, rates); // Call via the testable version
       const yieldRates: YieldRate[] = yieldRatesRaw.map(normalizeYieldRate);
 
       // Assertion
       expect(yieldRates).to.deep.equal(rates.slice(1, 5));
     });
 
-    it("Should return a single element when `startIndex` and `endIndex` are the same (multiple rates in array)", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Returns a single element when `startIndex` == `endIndex` (multiple rates in array)", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const rates = getSampleYieldRates(5);
+      const rates = createSampleYieldRates(5);
 
-      // Call the `truncateArray` function
-      const yieldRatesRaw = await yieldStreamerTestable.truncateArray(2, 2, rates);
+      // Call the `_truncateArray()` function via the testable contract version
+      const yieldRatesRaw = await yieldStreamer.truncateArray(2, 2, rates);
       const yieldRates: YieldRate[] = yieldRatesRaw.map(normalizeYieldRate);
 
       // Assertion
@@ -2204,13 +2154,13 @@ describe("YieldStreamerTestable", async () => {
       expect(yieldRates[0]).to.deep.equal(rates[2]);
     });
 
-    it("Should return a single element when `startIndex` and `endIndex` are the same (single rate in array)", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Returns a single element when `startIndex` == `endIndex` (single rate in array)", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const rates = getSampleYieldRates(1);
+      const rates = createSampleYieldRates(1);
 
-      // Call the `truncateArray` function
-      const yieldRatesRaw = await yieldStreamerTestable.truncateArray(0, 0, rates);
+      // Call the `_truncateArray()` function via the testable contract version
+      const yieldRatesRaw = await yieldStreamer.truncateArray(0, 0, rates);
       const yieldRates: YieldRate[] = yieldRatesRaw.map(normalizeYieldRate);
 
       // Assertion
@@ -2218,80 +2168,66 @@ describe("YieldStreamerTestable", async () => {
       expect(yieldRates[0]).to.deep.equal(rates[0]);
     });
 
-    it("Should revert when `startIndex` is greater than `endIndex`", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Is reverted when `startIndex` is greater than `endIndex`", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const rates = getSampleYieldRates(5);
+      const rates = createSampleYieldRates(5);
 
-      // Arithmetic operation overflowed outside of an unchecked block
-      await expect(yieldStreamerTestable.truncateArray(3, 2, rates)).to.be.revertedWithPanic(0x11);
+      // Arithmetic operation overflowed outside an unchecked block
+      await expect(yieldStreamer.truncateArray(3, 2, rates)).to.be.revertedWithPanic(0x11);
     });
 
-    it("Should revert when `endIndex` is out of bounds", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Is reverted when `endIndex` is out of bounds", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      const rates = getSampleYieldRates(5);
+      const rates = createSampleYieldRates(5);
 
       // Array accessed at an out-of-bounds or negative index
-      await expect(yieldStreamerTestable.truncateArray(5, 5, rates)).to.be.revertedWithPanic(0x32);
+      await expect(yieldStreamer.truncateArray(5, 5, rates)).to.be.revertedWithPanic(0x32);
     });
 
-    it("Should revert when rates array is empty", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Is reverted when rates array is empty", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       // Array accessed at an out-of-bounds or negative index
-      await expect(yieldStreamerTestable.truncateArray(0, 0, [])).to.be.revertedWithPanic(0x32);
+      await expect(yieldStreamer.truncateArray(0, 0, [])).to.be.revertedWithPanic(0x32);
     });
   });
 
-  describe("Function 'calculateFee()'", async () => {
-    it("Should calculate fee as expected", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+  describe("Function '_calculateFee()'", async () => {
+    it("Calculates fee as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       // `FEE_RATE` is 0, so the fee should always be 0
-      expect(await yieldStreamerTestable.calculateFee(0n)).to.equal(0n);
-      expect(await yieldStreamerTestable.calculateFee(1000000n)).to.equal(0n);
-      expect(await yieldStreamerTestable.calculateFee(1000000000000n)).to.equal(0n);
+      expect(await yieldStreamer.calculateFee(0n)).to.equal(0n);
+      expect(await yieldStreamer.calculateFee(1000000n)).to.equal(0n);
+      expect(await yieldStreamer.calculateFee(1000000000000n)).to.equal(0n);
     });
   });
 
-  describe("Function 'roundDown()'", async () => {
-    it("Should round down as expected", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+  describe("Function '_roundDown()'", async () => {
+    it("Rounds down as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      // Verify the function works as expected with hardcoded values
-      expect(await yieldStreamerTestable.roundDown(0n)).to.equal(0n);
-      expect(await yieldStreamerTestable.roundDown(10000000n)).to.equal(10000000n);
-      expect(await yieldStreamerTestable.roundDown(10000001n)).to.equal(10000000n);
-      expect(await yieldStreamerTestable.roundDown(10009999n)).to.equal(10000000n);
-
-      // Verify the function works as expected with the `roundDown` utility function
-      expect(await yieldStreamerTestable.roundDown(0n)).to.equal(roundDown(0n));
-      expect(await yieldStreamerTestable.roundDown(10000000n)).to.equal(roundDown(10000000n));
-      expect(await yieldStreamerTestable.roundDown(10000001n)).to.equal(roundDown(10000001n));
-      expect(await yieldStreamerTestable.roundDown(10009999n)).to.equal(roundDown(10009999n));
+      expect(await yieldStreamer.roundDown(0n)).to.equal(0n);
+      expect(await yieldStreamer.roundDown(10000000n)).to.equal(10000000n);
+      expect(await yieldStreamer.roundDown(10000001n)).to.equal(10000000n);
+      expect(await yieldStreamer.roundDown(10009999n)).to.equal(10000000n);
     });
   });
 
-  describe("Function 'roundUp()'", async () => {
-    it("Should round up as expected", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+  describe("Function '_roundUp()'", async () => {
+    it("Rounds up as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      // Verify the function works as expected with hardcoded values
-      expect(await yieldStreamerTestable.roundUp(0n)).to.equal(0n);
-      expect(await yieldStreamerTestable.roundUp(10000000n)).to.equal(10000000n);
-      expect(await yieldStreamerTestable.roundUp(10000001n)).to.equal(10010000n);
-      expect(await yieldStreamerTestable.roundUp(10009999n)).to.equal(10010000n);
-
-      // Verify the function works as expected with the `roundUp` utility function
-      expect(await yieldStreamerTestable.roundUp(0n)).to.equal(roundUp(0n));
-      expect(await yieldStreamerTestable.roundUp(10000000n)).to.equal(roundUp(10000000n));
-      expect(await yieldStreamerTestable.roundUp(10000001n)).to.equal(roundUp(10000001n));
-      expect(await yieldStreamerTestable.roundUp(10009999n)).to.equal(roundUp(10009999n));
+      expect(await yieldStreamer.roundUp(0n)).to.equal(0n);
+      expect(await yieldStreamer.roundUp(10000000n)).to.equal(10000000n);
+      expect(await yieldStreamer.roundUp(10000001n)).to.equal(10010000n);
+      expect(await yieldStreamer.roundUp(10009999n)).to.equal(10010000n);
     });
   });
 
-  describe("Function 'map()'", async () => {
+  describe("Function '_map()'", async () => {
     // Create an `AccruePreview` struct with sample data
     const accruePreview: AccruePreview = {
       fromTimestamp: 10000000n,
@@ -2337,11 +2273,11 @@ describe("YieldStreamerTestable", async () => {
       ]
     };
 
-    it("Should map as expected", async () => {
-      const { yieldStreamerTestable } = await setUpFixture(deployContracts);
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-      // Call the `map` function
-      const claimPreviewRaw: ClaimPreview = await yieldStreamerTestable.map(accruePreview);
+      // Call the `_map()` function via the testable contract version
+      const actualClaimPreviewRaw: ClaimPreview = await yieldStreamer.map(accruePreview);
 
       // Create the `ClaimPreview` struct with expected values
       const expectedClaimPreview: ClaimPreview = {
@@ -2355,18 +2291,10 @@ describe("YieldStreamerTestable", async () => {
         caps: accruePreview.rates[accruePreview.rates.length - 1].tiers.map(tier => tier.cap)
       };
 
+      const actualClaimPreview = normalizeClaimPreview(actualClaimPreviewRaw);
+
       // Assertion
-      expect(accruePreview.accruedYieldAfter + accruePreview.streamYieldAfter).not.to.equal(
-        roundDown(accruePreview.accruedYieldAfter + accruePreview.streamYieldAfter)
-      );
-      expect(expectedClaimPreview.yieldExact).to.equal(claimPreviewRaw.yieldExact);
-      expect(expectedClaimPreview.yieldRounded).to.equal(claimPreviewRaw.yieldRounded);
-      expect(expectedClaimPreview.feeExact).to.equal(claimPreviewRaw.feeExact);
-      expect(expectedClaimPreview.feeRounded).to.equal(claimPreviewRaw.feeRounded);
-      expect(expectedClaimPreview.timestamp).to.equal(claimPreviewRaw.timestamp);
-      expect(expectedClaimPreview.balance).to.equal(claimPreviewRaw.balance);
-      expect(expectedClaimPreview.rates).to.deep.equal(claimPreviewRaw.rates);
-      expect(expectedClaimPreview.caps).to.deep.equal(claimPreviewRaw.caps);
+      expect(actualClaimPreview).to.deep.equal(expectedClaimPreview);
     });
   });
 });

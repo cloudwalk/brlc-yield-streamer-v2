@@ -7,9 +7,31 @@ import { YieldStreamer } from "../YieldStreamer.sol";
 /**
  * @title YieldStreamerTestable contract
  * @author CloudWalk Inc. (See https://www.cloudwalk.io)
- * @dev Implements additional functions to test private and internal functions of base contracts.
+ * @dev Implements additional functions to test internal functions of the yield streamer contract.
  */
 contract YieldStreamerTestable is YieldStreamer {
+    // ------------------ Internal initializers ------------------- //
+
+    function call_parent_initialize(address underlyingToken) external {
+        __YieldStreamer_init(underlyingToken);
+    }
+
+    function call_parent_initialize_unchained(address underlyingToken) external {
+        __YieldStreamer_init_init_unchained(underlyingToken);
+    }
+
+    // ------------------ Setters for storage structures ---------- //
+
+    function setYieldState(address account, YieldState calldata newState) external {
+        _yieldStreamerStorage().yieldStates[account] = newState;
+    }
+
+    // ------------------ Getters for storage structures ---------- //
+
+    function getSourceGroupMapping(bytes32 groupKey) external view returns (uint256) {
+        return _yieldStreamerInitializationStorage().groupIds[groupKey];
+    }
+
     // ------------------ Yield calculation ----------------------- //
 
     function getAccruePreview(
@@ -46,7 +68,6 @@ contract YieldStreamerTestable is YieldStreamer {
     ) external pure returns (uint256) {
         return _calculateSimpleYield(amount, rate, elapsedSeconds);
     }
-
 
     function inRangeYieldRates(
         YieldRate[] memory rates,
