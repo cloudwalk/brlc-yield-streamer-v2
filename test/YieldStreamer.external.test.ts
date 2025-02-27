@@ -1167,7 +1167,8 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
       const tx = yieldStreamer.setInitializedFlag(userAddress, newFlagState);
       await proveTx(tx);
 
-      const expectedYieldState: YieldState = { ...defaultYieldState, flags: newFlagState ? 1n : 0n };
+      const flags = !newFlagState ? 0n : 1n;
+      const expectedYieldState: YieldState = { ...defaultYieldState, flags };
       const actualYieldState = await yieldStreamer.getYieldState(userAddress);
       checkEquality(actualYieldState, expectedYieldState);
 
