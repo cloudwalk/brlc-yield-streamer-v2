@@ -1,27 +1,50 @@
 import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
-import { Contract, ContractFactory } from "ethers";
+import { Contract } from "ethers";
 import {
   AccruePreview,
+  adjustTimestamp,
   ClaimPreview,
   DAY,
+  defaultYieldState,
   ERRORS,
   HOUR,
+  normalizeAccruePreview,
+  normalizeClaimPreview,
+  normalizeYieldRate,
+  normalizeYieldResult,
   RATE_FACTOR,
   RateTier,
-  ROUND_FACTOR,
+  roundDown,
   YieldRate,
   YieldResult,
   YieldState
 } from "../test-utils/specific";
-import { getAddress } from "../test-utils/eth";
-import { setUpFixture } from "../test-utils/common";
+import { getAddress, getTxTimestamp, proveTx } from "../test-utils/eth";
+import { checkEquality, maxUintForBits, setUpFixture } from "../test-utils/common";
+import { yieldStreamerV1ClaimResult, YieldStreamerV1ClaimResult } from "./YieldStreamer.external.test";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+
+const EVENTS = {
+  YieldStreamer_AccountInitialized: "YieldStreamer_AccountInitialized",
+  YieldStreamerV1Mock_BlocklistCalled: "YieldStreamerV1Mock_BlocklistCalled"
+};
 
 const INITIAL_DAY_INDEX = 21_000n; // 21000 days
 const INITIAL_TIMESTAMP = INITIAL_DAY_INDEX * DAY;
+const ADDRESS_ZERO = ethers.ZeroAddress;
+
+interface CompoundYieldParams {
+  fromTimestamp: bigint;
+  toTimestamp: bigint;
+  tiers: RateTier[];
+  balance: bigint;
+  streamYield: bigint;
+}
 
 interface Fixture {
   yieldStreamer: Contract;
+  yieldStreamerV1Mock: Contract;
   tokenMock: Contract;
 }
 
@@ -35,10 +58,10 @@ interface Fixture {
  */
 
 describe("Contract 'YieldStreamer' regarding internal functions", async () => {
-  let yieldStreamerTestableFactory: ContractFactory;
+  let user: HardhatEthersSigner;
 
   before(async () => {
-    yieldStreamerTestableFactory = await ethers.getContractFactory("YieldStreamerTestable");
+    [/* skip deployer */, user] = await ethers.getSigners();
   });
 
   async function deployContracts(): Promise<Fixture> {
@@ -47,14 +70,15 @@ describe("Contract 'YieldStreamer' regarding internal functions", async () => {
     await tokenMock.waitForDeployment();
     const tokenMockAddress = getAddress(tokenMock);
 
-    const yieldStreamer: Contract = await upgrades.deployProxy(yieldStreamerTestableFactory, [tokenMockAddress]);
+    const yieldStreamerV1MockFactory = await ethers.getContractFactory("YieldStreamerV1Mock");
+    const yieldStreamerV1Mock: Contract = (await yieldStreamerV1MockFactory.deploy()) as Contract;
+    await yieldStreamerV1Mock.waitForDeployment();
+
+    const yieldStreamerFactory = await ethers.getContractFactory("YieldStreamerTestable");
+    const yieldStreamer: Contract = await upgrades.deployProxy(yieldStreamerFactory, [tokenMockAddress]);
     await yieldStreamer.waitForDeployment();
 
-    return { yieldStreamer, tokenMock };
-  }
-
-  function roundDown(amount: bigint): bigint {
-    return (amount / ROUND_FACTOR) * ROUND_FACTOR;
+    return { yieldStreamer, yieldStreamerV1Mock, tokenMock };
   }
 
   function createSampleYieldRates(count: number): YieldRate[] {
@@ -74,70 +98,123 @@ describe("Contract 'YieldStreamer' regarding internal functions", async () => {
     return rates;
   }
 
-  function normalizeYieldRate(rate: YieldRate): YieldRate {
-    return {
-      effectiveDay: rate.effectiveDay,
-      tiers: rate.tiers.map((tier: RateTier) => ({
-        rate: tier.rate,
-        cap: tier.cap
-      }))
-    };
-  }
-
-  function normalizeYieldResult(result: YieldResult): YieldResult {
-    return {
-      partialFirstDayYield: result.partialFirstDayYield,
-      fullDaysYield: result.fullDaysYield,
-      partialLastDayYield: result.partialLastDayYield,
-      partialFirstDayYieldTiered: [...result.partialFirstDayYieldTiered],
-      fullDaysYieldTiered: [...result.fullDaysYieldTiered],
-      partialLastDayYieldTiered: [...result.partialLastDayYieldTiered]
-    };
-  }
-
-  function normalizeAccruePreview(result: AccruePreview): AccruePreview {
-    return {
-      fromTimestamp: result.fromTimestamp,
-      toTimestamp: result.toTimestamp,
-      balance: result.balance,
-      streamYieldBefore: result.streamYieldBefore,
-      accruedYieldBefore: result.accruedYieldBefore,
-      streamYieldAfter: result.streamYieldAfter,
-      accruedYieldAfter: result.accruedYieldAfter,
-      rates: result.rates.map((r: YieldRate) => ({
-        tiers: r.tiers.map((t: RateTier) => ({
-          rate: t.rate,
-          cap: t.cap
-        })),
-        effectiveDay: r.effectiveDay
-      })),
-      results: result.results.map((r: YieldResult) => ({
-        partialFirstDayYield: r.partialFirstDayYield,
-        fullDaysYield: r.fullDaysYield,
-        partialLastDayYield: r.partialLastDayYield,
-        partialFirstDayYieldTiered: [...r.partialFirstDayYieldTiered],
-        fullDaysYieldTiered: [...r.fullDaysYieldTiered],
-        partialLastDayYieldTiered: [...r.partialLastDayYieldTiered]
-      }))
-    };
-  }
-
-  function normalizeClaimPreview(claimPreview: ClaimPreview): ClaimPreview {
-    return {
-      yieldExact: claimPreview.yieldExact,
-      yieldRounded: claimPreview.yieldRounded,
-      feeExact: claimPreview.feeExact,
-      feeRounded: claimPreview.feeRounded,
-      timestamp: claimPreview.timestamp,
-      balance: claimPreview.balance,
-      rates: [...claimPreview.rates],
-      caps: [...claimPreview.caps]
-    };
-  }
-
   function simpleYield(amount: bigint, rate: bigint, elapsedSeconds: bigint): bigint {
     return (amount * rate * elapsedSeconds) / (DAY * RATE_FACTOR);
   }
+
+  describe("Function '_initializeSingleAccount()'", async () => {
+    const userBalance = maxUintForBits(64);
+    const groupKey = ethers.ZeroHash;
+    const groupId = 123456789;
+    const claimPreviewResult: YieldStreamerV1ClaimResult = {
+      ...yieldStreamerV1ClaimResult,
+      primaryYield: maxUintForBits(64) - 1n,
+      lastDayPartialYield: 1n
+    };
+
+    async function configureContracts(fixture: Fixture, accountAddress: string) {
+      const { yieldStreamer, yieldStreamerV1Mock, tokenMock } = fixture;
+      await yieldStreamer.setSourceYieldStreamer(getAddress(yieldStreamerV1Mock));
+      await yieldStreamerV1Mock.setBlocklister(getAddress(yieldStreamer), true);
+      await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(groupKey, groupId));
+      await proveTx(yieldStreamerV1Mock.setClaimAllPreview(accountAddress, claimPreviewResult));
+      if (accountAddress !== ADDRESS_ZERO) {
+        await proveTx(tokenMock.mint(accountAddress, userBalance));
+      }
+    }
+
+    it("Executes as expected if the account is not initialized", async () => {
+      const fixture = await setUpFixture(deployContracts);
+      const { yieldStreamer, yieldStreamerV1Mock } = fixture;
+      const accountAddress = user.address;
+
+      await configureContracts(fixture, accountAddress);
+      {
+        const actualYieldState = await yieldStreamer.getYieldState(accountAddress);
+        checkEquality(actualYieldState, defaultYieldState);
+      }
+
+      // Call the `_initializeSingleAccount()` function via the testable contract version
+      const tx = yieldStreamer.initializeSingleAccount(accountAddress);
+      const expectedBlockTimestamp = adjustTimestamp(await getTxTimestamp(tx));
+
+      const expectedYieldState: YieldState = {
+        flags: 1n,
+        streamYield: 0n,
+        accruedYield: claimPreviewResult.primaryYield + claimPreviewResult.lastDayPartialYield,
+        lastUpdateTimestamp: expectedBlockTimestamp,
+        lastUpdateBalance: userBalance
+      };
+
+      {
+        const actualYieldState = await yieldStreamer.getYieldState(accountAddress);
+        checkEquality(actualYieldState, expectedYieldState);
+      }
+
+      await expect(tx)
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_AccountInitialized)
+        .withArgs(
+          accountAddress,
+          groupId,
+          userBalance,
+          expectedYieldState.accruedYield,
+          0 // streamYield
+        );
+      await expect(tx)
+        .to.emit(yieldStreamerV1Mock, EVENTS.YieldStreamerV1Mock_BlocklistCalled)
+        .withArgs(accountAddress);
+    });
+
+    it("Executes as expected if the account is already initialized", async () => {
+      const fixture = await setUpFixture(deployContracts);
+      const { yieldStreamer, yieldStreamerV1Mock } = fixture;
+      const accountAddress = user.address;
+
+      await configureContracts(fixture, accountAddress);
+      const expectedYieldState: YieldState = {
+        ...defaultYieldState,
+        flags: 1n
+      };
+      await proveTx(yieldStreamer.setYieldState(accountAddress, expectedYieldState)); // Call via the testable version
+
+      // Call the `_initializeSingleAccount()` function via the testable contract version
+      const tx = yieldStreamer.initializeSingleAccount(accountAddress);
+      await expect(tx).not.to.emit(yieldStreamer, EVENTS.YieldStreamer_AccountInitialized);
+      await expect(tx).not.to.emit(yieldStreamerV1Mock, EVENTS.YieldStreamerV1Mock_BlocklistCalled);
+
+      {
+        const actualYieldState = await yieldStreamer.getYieldState(accountAddress);
+        checkEquality(actualYieldState, expectedYieldState);
+      }
+    });
+
+    it("Executes as expected even if the account address is zero", async () => {
+      const fixture = await setUpFixture(deployContracts);
+      const { yieldStreamer } = fixture;
+      const accountAddress = (ADDRESS_ZERO);
+
+      await configureContracts(fixture, accountAddress);
+
+      // Call the `_initializeSingleAccount()` function via the testable contract version
+      const tx = yieldStreamer.initializeSingleAccount(accountAddress);
+      await expect(tx).not.to.be.reverted;
+    });
+
+    it("Is reverted if the yield streamer source is not configured", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      await expect(yieldStreamer.initializeSingleAccount(user.address))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_SourceYieldStreamerNotConfigured);
+    });
+
+    it("Is reverted if the contract does not have the blocklister role in the source yield streamer", async () => {
+      const { yieldStreamer, yieldStreamerV1Mock } = await setUpFixture(deployContracts);
+      await yieldStreamer.setSourceYieldStreamer(getAddress(yieldStreamerV1Mock));
+
+      await expect(yieldStreamer.initializeSingleAccount(user.address))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_SourceYieldStreamerUnauthorizedBlocklister);
+    });
+  });
 
   describe("Function '_getAccruePreview()'", async () => {
     interface GetAccruePreviewTestCase {
@@ -1020,13 +1097,7 @@ describe("Contract 'YieldStreamer' regarding internal functions", async () => {
   describe("Function '_compoundYield()'", async () => {
     interface CompoundYieldTestCase {
       description: string;
-      params: {
-        fromTimestamp: bigint;
-        toTimestamp: bigint;
-        tiers: RateTier[];
-        balance: bigint;
-        streamYield: bigint;
-      };
+      params: CompoundYieldParams;
       expected: {
         partialFirstDayYield: bigint;
         fullDaysYield: bigint;
@@ -1496,6 +1567,62 @@ describe("Contract 'YieldStreamer' regarding internal functions", async () => {
             ) // ------------------------------------------------------------ PLD T3: 10105
           ]
         }
+      },
+      {
+        description: "Same timestamps 'from' and 'to'",
+        params: {
+          fromTimestamp: INITIAL_TIMESTAMP,
+          toTimestamp: INITIAL_TIMESTAMP,
+          tiers: [{ rate: RATE_FACTOR / 10n, cap: 0n }],
+          balance: 12345678n,
+          streamYield: 87654321n
+        },
+        expected: {
+          partialFirstDayYield: 0n,
+          fullDaysYield: 0n,
+          partialLastDayYield: 0n,
+          partialFirstDayYieldTiered: [],
+          fullDaysYieldTiered: [],
+          partialLastDayYieldTiered: []
+        }
+      },
+      {
+        description: "Zero balance for calculations",
+        params: {
+          fromTimestamp: INITIAL_TIMESTAMP,
+          toTimestamp: INITIAL_TIMESTAMP + DAY,
+          tiers: [{ rate: RATE_FACTOR / 10n, cap: 0n }],
+          balance: 0n,
+          streamYield: 87654321n
+        },
+        expected: {
+          partialFirstDayYield: 0n,
+          fullDaysYield: 0n,
+          partialLastDayYield: 0n,
+          partialFirstDayYieldTiered: [],
+          fullDaysYieldTiered: [],
+          partialLastDayYieldTiered: []
+        }
+      },
+      {
+        description: "The 'from' timestamp is greater than the 'to' one",
+        params: {
+          fromTimestamp: INITIAL_TIMESTAMP + DAY,
+          toTimestamp: INITIAL_TIMESTAMP,
+          tiers: [{ rate: RATE_FACTOR / 10n, cap: 0n }],
+          balance: 0n,
+          streamYield: 87654321n
+        },
+        expected: {
+          partialFirstDayYield: 0n,
+          fullDaysYield: 0n,
+          partialLastDayYield: 0n,
+          partialFirstDayYieldTiered: [],
+          fullDaysYieldTiered: [],
+          partialLastDayYieldTiered: []
+        },
+        revertMessage: ERRORS.YieldStreamer_TimeRangeInvalid,
+        shouldRevert: true
       }
     ];
 
@@ -2295,6 +2422,48 @@ describe("Contract 'YieldStreamer' regarding internal functions", async () => {
 
       // Assertion
       expect(actualClaimPreview).to.deep.equal(expectedClaimPreview);
+    });
+  });
+
+  describe("Function 'setBit()'", async () => {
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      expect(await yieldStreamer.setBit(0, 0)).to.equal(0x01);
+      expect(await yieldStreamer.setBit(0, 7)).to.equal(0x80);
+    });
+
+    it("Is reverted if the bit index is greater than 7", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      await expect(yieldStreamer.setBit(0, 8))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.Bitwise_BitIndexOutOfBounds);
+    });
+  });
+
+  describe("Function 'clearBit()'", async () => {
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      expect(await yieldStreamer.clearBit(0xFF, 0)).to.equal(0xFE);
+      expect(await yieldStreamer.clearBit(0xFF, 7)).to.equal(0x7F);
+    });
+
+    it("Is reverted if the bit index is greater than 7", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      await expect(yieldStreamer.clearBit(0xFF, 8))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.Bitwise_BitIndexOutOfBounds);
+    });
+  });
+
+  describe("Function 'isBitSet()'", async () => {
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      expect(await yieldStreamer.isBitSet(0x01, 0)).to.equal(true);
+      expect(await yieldStreamer.isBitSet(0x7F, 7)).to.equal(false);
+    });
+
+    it("Is reverted if the bit index is greater than 7", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      await expect(yieldStreamer.isBitSet(0xFF, 8))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.Bitwise_BitIndexOutOfBounds);
     });
   });
 });

@@ -10,8 +10,10 @@ import { IYieldStreamerV1 } from "../interfaces/IYieldStreamerV1.sol";
  * @dev An implementation of the {YieldStreamerV1} contract for testing purposes.
  */
 contract YieldStreamerV1Mock is IYieldStreamerV1 {
-    // Errors
-    error YieldStreamerV1Mock_NotImplemented();
+    /**
+     * @dev Emitted when an blocklist function is called.
+     */
+    event YieldStreamerV1Mock_BlocklistCalled(address account);
 
     // ------------------ Storage---- ----------------------------- //
 
@@ -31,22 +33,20 @@ contract YieldStreamerV1Mock is IYieldStreamerV1 {
      * @inheritdoc IYieldStreamerV1
      */
     function blocklist(address account) external {
-        // revert YieldStreamerV1Mock_NotImplemented();
+        emit YieldStreamerV1Mock_BlocklistCalled(account);
     }
 
     /**
      * @inheritdoc IYieldStreamerV1
      */
     function isBlocklister(address account) external view returns (bool) {
-        //revert YieldStreamerV1Mock_NotImplemented();
-        return true;
+        return _isBlocklister[account];
     }
 
     /**
      * @inheritdoc IYieldStreamerV1
      */
     function getAccountGroup(address account) external view returns (bytes32) {
-        //revert YieldStreamerV1Mock_NotImplemented();
         return bytes32(0);
     }
 

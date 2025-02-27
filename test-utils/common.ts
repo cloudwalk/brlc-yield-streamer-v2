@@ -35,3 +35,7 @@ export function checkEquality<T extends Record<string, unknown>>(
     );
   });
 }
+
+export function maxUintForBits(numberOfBits: number): bigint {
+  return 2n ** BigInt(numberOfBits) - 1n;
+}

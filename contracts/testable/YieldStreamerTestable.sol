@@ -3,6 +3,7 @@
 pragma solidity 0.8.24;
 
 import { YieldStreamer } from "../YieldStreamer.sol";
+import { Bitwise } from "../libs/Bitwise.sol";
 
 /**
  * @title YieldStreamerTestable contract
@@ -30,6 +31,12 @@ contract YieldStreamerTestable is YieldStreamer {
 
     function getSourceGroupMapping(bytes32 groupKey) external view returns (uint256) {
         return _yieldStreamerInitializationStorage().groupIds[groupKey];
+    }
+
+    // ------------------ Account initializers -------------------- //
+
+    function initializeSingleAccount(address account) external {
+        _initializeSingleAccount(account);
     }
 
     // ------------------ Yield calculation ----------------------- //
@@ -111,5 +118,19 @@ contract YieldStreamerTestable is YieldStreamer {
 
     function map(AccruePreview memory accrue) external pure returns (ClaimPreview memory) {
         return _map(accrue);
+    }
+
+    // ------------------ Bitwise functions ----------------------- //
+
+    function setBit(uint8 flags, uint256 bitIndex) external pure returns (uint8) {
+        return Bitwise.setBit(flags, bitIndex);
+    }
+
+    function clearBit(uint8 flags, uint256 bitIndex) external pure returns (uint8) {
+        return Bitwise.clearBit(flags, bitIndex);
+    }
+
+    function isBitSet(uint8 flags, uint256 bitIndex) external pure returns (bool) {
+        return Bitwise.isBitSet(flags, bitIndex);
     }
 }

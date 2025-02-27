@@ -11,8 +11,12 @@ import {
   proveTx
 } from "../test-utils/eth";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import { checkEquality, setUpFixture } from "../test-utils/common";
+import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
+import { checkEquality, maxUintForBits, setUpFixture } from "../test-utils/common";
 import {
+  AccruePreview,
+  adjustTimestamp,
+  ClaimPreview,
   DAY,
   defaultYieldState,
   ENABLE_YIELD_STATE_AUTO_INITIALIZATION,
@@ -21,38 +25,123 @@ import {
   HOUR,
   MIN_CLAIM_AMOUNT,
   NEGATIVE_TIME_SHIFT,
+  normalizeAccruePreview,
+  normalizeClaimPreview,
+  normalizeTimestamp,
+  normalizeYieldRate,
+  normalizeYieldResult,
   RATE_FACTOR,
   ROUND_FACTOR,
+  roundDown,
   YieldRate,
   YieldState
 } from "../test-utils/specific";
 
+const EVENTS = {
+  YieldStreamer_AccountInitialized: "YieldStreamer_AccountInitialized",
+  YieldStreamer_FeeReceiverChanged: "YieldStreamer_FeeReceiverChanged",
+  YieldStreamer_GroupAssigned: "YieldStreamer_GroupAssigned",
+  YieldStreamer_GroupMapped: "YieldStreamer_GroupMapped",
+  YieldStreamer_InitializedFlagSet: "YieldStreamer_InitializedFlagSet",
+  YieldStreamer_SourceYieldStreamerChanged: "YieldStreamer_SourceYieldStreamerChanged",
+  YieldStreamer_YieldAccrued: "YieldStreamer_YieldAccrued",
+  YieldStreamer_YieldRateAdded: "YieldStreamer_YieldRateAdded",
+  YieldStreamer_YieldRateUpdated: "YieldStreamer_YieldRateUpdated",
+  YieldStreamer_YieldTransferred: "YieldStreamer_YieldTransferred",
+  YieldStreamerV1Mock_BlocklistCalled: "YieldStreamerV1Mock_BlocklistCalled"
+};
+
 const ADDRESS_ZERO = ethers.ZeroAddress;
 const DEFAULT_GROUP_ID = 0n;
+const EFFECTIVE_DAY_ZERO = 0n;
+const CAP_ZERO = 0n;
+const RATE_ZERO = 0n;
+const MAX_GROUP_ID = maxUintForBits(32);
 const DEFAULT_SOURCE_GROUP_KEY = ethers.ZeroHash;
 const STATE_FLAG_INITIALIZED = 1n;
 
 const INITIAL_YIELD_STREAMER_BALANCE = 1_000_000_000n;
 const RATE_40 = (RATE_FACTOR * 40n) / 100n; // 40%
 const RATE_80 = (RATE_FACTOR * 80n) / 100n; // 80%
-const YIELD_RATE = (RATE_FACTOR * 10n) / 100n; // 10%
+const RATE = RATE_FACTOR / 100n; // 1%
 
 const OWNER_ROLE: string = ethers.id("OWNER_ROLE");
 const ADMIN_ROLE: string = ethers.id("ADMIN_ROLE");
 const PAUSER_ROLE: string = ethers.id("PAUSER_ROLE");
 
-// export interface ClaimResult {
-//   nextClaimDay: bigint;
-//   nextClaimDebit: bigint;
-//   firstYieldDay: bigint;
-//   prevClaimDebit: bigint;
-//   primaryYield: bigint;
-//   streamYield: bigint;
-//   lastDayPartialYield: bigint;
-//   shortfall: bigint;
-//   fee: bigint;
-//   yield: bigint;
-// }
+// The yield rates array for the default yield group
+const YIELD_RATES1: YieldRate[] = [{
+  effectiveDay: 0n,
+  tiers: [{ rate: RATE, cap: 0n }]
+}];
+
+// The yield rates array for the max yield group
+const YIELD_RATES2: YieldRate[] = [
+  {
+    tiers: [
+      {
+        rate: maxUintForBits(48),
+        cap: maxUintForBits(64)
+      },
+      {
+        rate: 0n,
+        cap: 0n
+      },
+      {
+        rate: 123456789n,
+        cap: 987654321n
+      }
+    ],
+    effectiveDay: 0n
+  },
+  {
+    tiers: [
+      {
+        rate: maxUintForBits(48) - 1n,
+        cap: maxUintForBits(64) - 1n
+      },
+      {
+        rate: 0n + 1n,
+        cap: 0n + 1n
+      },
+      {
+        rate: 123456789n - 1n,
+        cap: 987654321n + 1n
+      }
+    ],
+    effectiveDay: 12345n
+  },
+  {
+    tiers: [
+      {
+        rate: maxUintForBits(48) - 2n,
+        cap: maxUintForBits(64) - 2n
+      },
+      {
+        rate: 0n + 2n,
+        cap: 0n + 2n
+      },
+      {
+        rate: 123456789n - 2n,
+        cap: 987654321n + 2n
+      }
+    ],
+    effectiveDay: maxUintForBits(16)
+  }
+];
+
+export interface YieldStreamerV1ClaimResult {
+  nextClaimDay: bigint;
+  nextClaimDebit: bigint;
+  firstYieldDay: bigint;
+  prevClaimDebit: bigint;
+  primaryYield: bigint;
+  streamYield: bigint;
+  lastDayPartialYield: bigint;
+  shortfall: bigint;
+  fee: bigint;
+  yield: bigint;
+}
 
 interface Version {
   major: number;
@@ -86,18 +175,34 @@ const EXPECTED_VERSION: Version = {
   patch: 0
 };
 
-// export const defaultClaimResult: ClaimResult = {
-//   nextClaimDay: 0n,
-//   nextClaimDebit: 0n,
-//   firstYieldDay: 0n,
-//   prevClaimDebit: 0n,
-//   primaryYield: 10000000n,
-//   streamYield: 0n,
-//   lastDayPartialYield: 1999999n,
-//   shortfall: 0n,
-//   fee: 0n,
-//   yield: 0n
-// };
+function getTierRates(yieldRate: YieldRate): bigint[] {
+  return yieldRate.tiers.map(tier => tier.rate);
+}
+
+function getTierCaps(yieldRate: YieldRate): bigint[] {
+  return yieldRate.tiers.map(tier => tier.cap);
+}
+
+async function getGroupsForAccounts(yieldStreamer: Contract, accounts: string[]): Promise<bigint[]> {
+  const actualGroups: bigint[] = [];
+  for (const account of accounts) {
+    actualGroups.push(await yieldStreamer.getAccountGroup(account));
+  }
+  return actualGroups;
+}
+
+export const yieldStreamerV1ClaimResult: YieldStreamerV1ClaimResult = {
+  nextClaimDay: 0n,
+  nextClaimDebit: 0n,
+  firstYieldDay: 0n,
+  prevClaimDebit: 0n,
+  primaryYield: 0n,
+  streamYield: 0n,
+  lastDayPartialYield: 0n,
+  shortfall: 0n,
+  fee: 0n,
+  yield: 0n
+};
 
 describe("Contract 'YieldStreamer' regarding external functions", async () => {
   let yieldStreamerFactory: ContractFactory;
@@ -106,11 +211,12 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
 
   let deployer: HardhatEthersSigner;
   let admin: HardhatEthersSigner;
-  let user: HardhatEthersSigner;
+  let feeReceiver: HardhatEthersSigner;
   let stranger: HardhatEthersSigner;
+  let users: HardhatEthersSigner[];
 
   before(async () => {
-    [deployer, admin, user, stranger] = await ethers.getSigners();
+    [deployer, admin, feeReceiver, stranger, ...users] = await ethers.getSigners();
 
     // Factories with an explicitly specified deployer account
     yieldStreamerFactory = await ethers.getContractFactory("YieldStreamerTestable");
@@ -121,21 +227,18 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
     tokenMockFactory = tokenMockFactory.connect(deployer);
   });
 
-  function adjustTimestamp(timestamp: number | bigint): bigint {
-    return BigInt(timestamp) - NEGATIVE_TIME_SHIFT;
-  }
-
-  function normalizeTimestamp(timestamp: number | bigint): number {
-    return Number(BigInt(timestamp) + NEGATIVE_TIME_SHIFT);
-  }
-
   async function getLatestBlockAdjustedTimestamp(): Promise<bigint> {
     return adjustTimestamp(await getLatestBlockTimestamp());
   }
 
   async function getNearestDayEndAdjustedTimestamp(): Promise<bigint> {
     const adjustedTimestamp = await getLatestBlockAdjustedTimestamp();
-    return (adjustedTimestamp / DAY) * DAY + DAY - 1n;
+    let nearestDayEndAdjustedTimestamp = (adjustedTimestamp / DAY) * DAY + DAY - 1n;
+    // If the current timestamp is too close to the day end then the next day end must be taken to have time for tests
+    if (nearestDayEndAdjustedTimestamp - adjustedTimestamp <= 20 * 60) {
+      nearestDayEndAdjustedTimestamp += DAY;
+    }
+    return nearestDayEndAdjustedTimestamp;
   }
 
   function calculateEffectiveDay(adjustedTimestamp: bigint, additionalNumberOfDays: bigint): bigint {
@@ -161,10 +264,10 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
   ) {
     const { yieldStreamer, tokenMock } = fixture;
 
-    await tokenMock.setHook(getAddress(yieldStreamer));
+    await proveTx(tokenMock.setHook(getAddress(yieldStreamer)));
 
     // Set the initialized state for the user
-    await yieldStreamer.setInitializedFlag(user.address, true);
+    await yieldStreamer.setInitializedFlag(users[0].address, true);
 
     // Add yield rates to the contract
     await addYieldRates(yieldStreamer, yieldRates);
@@ -193,29 +296,38 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
       let tx: Promise<TransactionResponse>;
       if (actionItem.balanceChange >= 0) {
         // Perform a deposit action
-        tx = tokenMock.mint(user.address, actionItem.balanceChange);
+        tx = tokenMock.mint(users[0].address, actionItem.balanceChange);
       } else {
         // Perform a withdrawal action
-        tx = tokenMock.burn(user.address, -actionItem.balanceChange);
+        tx = tokenMock.burn(users[0].address, -actionItem.balanceChange);
       }
       const txTimestamp = await getTxTimestamp(tx);
 
       // Fetch the actual yield state from the contract after the action
-      const actualYieldState = await yieldStreamer.getYieldState(user.address);
+      const actualYieldState = await yieldStreamer.getYieldState(users[0].address);
 
       // Update the expected lastUpdateTimestamp with the adjusted block timestamp and set the correct flags
       const expectedYieldState: YieldState = {
         ...defaultYieldState,
         flags: STATE_FLAG_INITIALIZED,
-        lastUpdateTimestamp: adjustTimestamp(txTimestamp),
-        lastUpdateBalance: actionItem.expectedYieldState.lastUpdateBalance,
+        streamYield: actionItem.expectedYieldState.streamYield,
         accruedYield: actionItem.expectedYieldState.accruedYield,
-        streamYield: actionItem.expectedYieldState.streamYield
+        lastUpdateTimestamp: adjustTimestamp(txTimestamp),
+        lastUpdateBalance: actionItem.expectedYieldState.lastUpdateBalance
       };
 
       // Assert that the actual yield state matches the expected state
       checkEquality(actualYieldState, expectedYieldState, index);
     }
+  }
+
+  function calculateStreamYield(
+    yieldState: YieldState,
+    dailyRate: bigint,
+    timestamp: bigint
+  ) {
+    const dailyYieldWithRateFactor = (yieldState.lastUpdateBalance + yieldState.accruedYield) * dailyRate;
+    return dailyYieldWithRateFactor * (timestamp - yieldState.lastUpdateTimestamp) / (DAY * RATE_FACTOR);
   }
 
   async function deployContracts(): Promise<Fixture> {
@@ -243,13 +355,9 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
     await yieldStreamer.setSourceYieldStreamer(getAddress(yieldStreamerV1Mock));
     await yieldStreamerV1Mock.setBlocklister(getAddress(yieldStreamer), true);
     await yieldStreamer.grantRole(ADMIN_ROLE, admin.address);
-    const yieldRate: YieldRate = {
-      effectiveDay: 0n,
-      tiers: [{ rate: YIELD_RATE, cap: 0n }]
-    };
-    await addYieldRates(yieldStreamer, [yieldRate]);
+    await addYieldRates(yieldStreamer, YIELD_RATES1, DEFAULT_GROUP_ID);
+    await addYieldRates(yieldStreamer, YIELD_RATES2, MAX_GROUP_ID);
 
-    await yieldStreamer.setInitializedFlag(user.address, true);
     await proveTx(tokenMock.mint(getAddress(yieldStreamer), INITIAL_YIELD_STREAMER_BALANCE));
 
     return fixture;
@@ -290,8 +398,8 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
       // Default values of the internal structures, mappings and variables. Also checks the set of fields
       expect(await yieldStreamer.underlyingToken()).to.equal(tokenMockAddress);
       expect(await yieldStreamer.feeReceiver()).to.equal(ADDRESS_ZERO);
-      expect(await yieldStreamer.getAccountGroup(user.address)).to.eq(DEFAULT_GROUP_ID);
-      checkEquality(await yieldStreamer.getYieldState(user.address), defaultYieldState);
+      expect(await yieldStreamer.getAccountGroup(users[0].address)).to.equal(DEFAULT_GROUP_ID);
+      checkEquality(await yieldStreamer.getYieldState(users[0].address), defaultYieldState);
       const actualYieldRates = await yieldStreamer.getGroupYieldRates(DEFAULT_GROUP_ID);
       expect(actualYieldRates.length).to.equal(0);
 
@@ -308,6 +416,12 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
         yieldStreamer,
         ERRORS.InvalidInitialization
       );
+    });
+
+    it("Is reverted if the underlying token address is zero", async () => {
+      const wrongTokenAddress = (ADDRESS_ZERO);
+      await expect(upgrades.deployProxy(yieldStreamerFactory, [wrongTokenAddress]))
+        .to.be.revertedWithCustomError(yieldStreamerFactory, ERRORS.YieldStreamer_TokenAddressZero);
     });
 
     it("Is reverted if the internal initializer is called outside the init process", async () => {
@@ -358,116 +472,844 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
     });
   });
 
-  describe("Function 'claimAmountFor()'", async () => {
-    // + Should revert when the account is not initialized.
-    // + Should revert when the claim amount is below the minimum claim threshold.
-    // + Should revert when the claim amount is not rounded down to the required precision.
-    // Should revert when the underlying token transfer fails due to insufficient balance in the contract.
-    // + Should revert if the claim amount exceeds the total available yield for the account.
+  describe("Function 'addYieldRate()'", async () => {
+    const groupId = (MAX_GROUP_ID);
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
-    // Should successfully claim the exact minimum claim amount when all conditions are met.
-    // Should successfully claim an amount equal to the account's accrued yield.
-    // Should successfully claim an amount less than the account's total yield (accrued plus stream yield).
-    // Should successfully claim the maximum possible yield available to the account.
+      // Add first yield rate with the zero effective day
+      const tx1 = yieldStreamer.addYieldRate(
+        groupId,
+        YIELD_RATES2[0].effectiveDay,
+        getTierRates(YIELD_RATES2[0]),
+        getTierCaps(YIELD_RATES2[0])
+      );
 
-    // Should correctly accrue yield before transferring the claimed amount.
+      await proveTx(tx1);
+      const actualRates1: YieldRate[] = (await yieldStreamer.getGroupYieldRates(groupId)).map(normalizeYieldRate);
+      const expectedRates1: YieldRate[] = [YIELD_RATES2[0]];
+      expect(actualRates1).to.deep.equal(expectedRates1);
+      await expect(tx1)
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldRateAdded)
+        .withArgs(
+          groupId,
+          YIELD_RATES2[0].effectiveDay,
+          getTierRates(YIELD_RATES2[0]),
+          getTierCaps(YIELD_RATES2[0])
+        );
 
-    // Should correctly deduct the claimed amount from the account's accrued and stream yield balances.
+      // Add second yield rate with a non-zero effective day
+      const tx2 = yieldStreamer.addYieldRate(
+        groupId,
+        YIELD_RATES2[1].effectiveDay,
+        getTierRates(YIELD_RATES2[1]),
+        getTierCaps(YIELD_RATES2[1])
+      );
 
-    // Should correctly handle fee deduction and transfer the fee to the designated fee receiver.
-
-    // Should emit the appropriate events upon successful yield transfer.
-
-    // Should revert if the fee receiver address is not configured when a fee is applicable.
-
-    // Should handle multiple consecutive claims correctly, updating the yield balances each time.
-
-    // Should handle claims for accounts with zero yielded balance gracefully by reverting appropriately.
-    // Should correctly handle claims immediately after yield accrual without delays.
-    // Should revert if the _accrueYield function fails during the claim process.
-
-    it("Is reverted if the claim amount exceeds the total available yield for the account", async () => {
-      const { yieldStreamerUnderAdmin } = await setUpFixture(deployAndConfigureContracts);
-      const yieldState: YieldState = {
-        ...defaultYieldState,
-        flags: STATE_FLAG_INITIALIZED,
-        accruedYield: MIN_CLAIM_AMOUNT,
-        lastUpdateTimestamp: await getLatestBlockAdjustedTimestamp()
-      };
-      await proveTx(yieldStreamerUnderAdmin.setYieldState(user.address, yieldState)); // Call via the testable version
-
-      await expect(
-        yieldStreamerUnderAdmin.claimAmountFor(user.address, yieldState.accruedYield + ROUND_FACTOR)
-      ).to.be.revertedWithCustomError(yieldStreamerUnderAdmin, ERRORS.YieldStreamer_YieldBalanceInsufficient);
+      await proveTx(tx2);
+      const actualRates2: YieldRate[] = (await yieldStreamer.getGroupYieldRates(groupId)).map(normalizeYieldRate);
+      const expectedRates2: YieldRate[] = [YIELD_RATES2[0], YIELD_RATES2[1]];
+      expect(actualRates2).to.deep.equal(expectedRates2);
+      await expect(tx2)
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldRateAdded)
+        .withArgs(
+          groupId,
+          YIELD_RATES2[1].effectiveDay,
+          getTierRates(YIELD_RATES2[1]),
+          getTierCaps(YIELD_RATES2[1])
+        );
     });
 
-    it("Is reverted if the underlying token transfer fails due to insufficient balance in the contract", async () => {
-      const { yieldStreamerUnderAdmin, tokenMock } = await setUpFixture(deployAndConfigureContracts);
-      const yieldState: YieldState = {
-        ...defaultYieldState,
-        flags: STATE_FLAG_INITIALIZED,
-        accruedYield: MIN_CLAIM_AMOUNT,
-        lastUpdateTimestamp: await getLatestBlockAdjustedTimestamp()
-      };
-      await proveTx(yieldStreamerUnderAdmin.setYieldState(user.address, yieldState)); // Call via the testable version
-      await proveTx(tokenMock.burn(getAddress(yieldStreamerUnderAdmin), INITIAL_YIELD_STREAMER_BALANCE));
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
 
       await expect(
-        yieldStreamerUnderAdmin.claimAmountFor(user.address, MIN_CLAIM_AMOUNT)
-      ).to.be.revertedWithCustomError(tokenMock, ERRORS.ERC20InsufficientBalance);
+        connect(yieldStreamer, stranger).addYieldRate(
+          groupId,
+          YIELD_RATES2[0].effectiveDay,
+          getTierRates(YIELD_RATES2[0]),
+          getTierCaps(YIELD_RATES2[0])
+        )
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.AccessControlUnauthorizedAccount
+      ).withArgs(stranger.address, OWNER_ROLE);
     });
 
-    it("Is reverted if the account is not initialized", async () => {
-      const { yieldStreamerUnderAdmin } = await setUpFixture(deployAndConfigureContracts);
-      const yieldState: YieldState = {
-        ...defaultYieldState,
-        flags: 0n,
-        accruedYield: 1000n
-      };
-      await proveTx(yieldStreamerUnderAdmin.setYieldState(user.address, yieldState)); // Call via the testable version
-      await expect(
-        yieldStreamerUnderAdmin.claimAmountFor(user.address, MIN_CLAIM_AMOUNT)
-      ).to.be.revertedWithCustomError(yieldStreamerUnderAdmin, ERRORS.YieldStreamer_AccountNotInitialized);
+    // it("Is reverted if the provided tier rates and tier caps arrays are empty", async () => {
+    //   const { yieldStreamer } = await setUpFixture(deployContracts);
+    //   const emptyArray: bigint[] = [];
+    //
+    //   await expect(yieldStreamer.addYieldRate(groupId, 0n, emptyArray, emptyArray)).to.be.reverted;
+    // });
+
+    it("Is reverted if the provided tier rates and caps arrays have different lengths", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const tierRates1 = [100n, 200n];
+      const tierCaps1 = [300n];
+      // const tierRates2 = [100n];
+      // const tierCaps2 = [200n, 300n];
+
+      await expect(yieldStreamer.addYieldRate(groupId, 0n, tierRates1, tierCaps1)).to.be.revertedWithPanic(0x32);
+      // await expect(yieldStreamer.addYieldRate(groupId, 0n, tierRates2, tierCaps2)).to.be.revertedWithPanic(0x32);
     });
 
-    it("Is reverted if the amount is less than the minimum claim amount", async () => {
-      const { yieldStreamerUnderAdmin } = await setUpFixture(deployAndConfigureContracts);
-      const claimAmount = MIN_CLAIM_AMOUNT - 1n;
+    it("Is reverted if the first added yield rate has a non-zero effective day", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const nonZeroEffectiveDay = 1n;
 
       await expect(
-        yieldStreamerUnderAdmin.claimAmountFor(user.address, claimAmount)
-      ).to.be.revertedWithCustomError(yieldStreamerUnderAdmin, ERRORS.YieldStreamer_ClaimAmountBelowMinimum);
+        yieldStreamer.addYieldRate(
+          groupId,
+          nonZeroEffectiveDay,
+          getTierRates(YIELD_RATES2[0]),
+          getTierCaps(YIELD_RATES2[0])
+        )
+      ).revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateInvalidEffectiveDay);
     });
 
-    it("Is reverted is the amount is not rounded down to the required precision", async () => {
-      const { yieldStreamerUnderAdmin } = await setUpFixture(deployAndConfigureContracts);
-      const claimAmount = MIN_CLAIM_AMOUNT + 1n;
+    it("Is reverted if the new eff. day is not greater than the eff. day of the preceding rate object", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      // Add initial yield rates to the group
+      await addYieldRates(yieldStreamer, [YIELD_RATES2[0], YIELD_RATES2[1]], groupId);
+
+      // Create new yield rate with same effective day as previous rate
+      const newYieldRate: YieldRate = { ...YIELD_RATES2[2] };
+      newYieldRate.effectiveDay = YIELD_RATES2[1].effectiveDay;
+
+      // Attempt to add yield rate - should revert since effective day is not greater
+      await expect(
+        yieldStreamer.addYieldRate(
+          groupId,
+          newYieldRate.effectiveDay,
+          getTierRates(newYieldRate),
+          getTierCaps(newYieldRate)
+        )
+      ).revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateInvalidEffectiveDay);
+    });
+
+    it("Is reverted if the provided effective day is greater than uint16 max value", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const wrongEffectiveDay = maxUintForBits(16) + 1n;
+
+      await proveTx(yieldStreamer.addYieldRate(
+        groupId,
+        EFFECTIVE_DAY_ZERO,
+        getTierRates(YIELD_RATES2[0]),
+        getTierCaps(YIELD_RATES2[0])
+      ));
 
       await expect(
-        yieldStreamerUnderAdmin.claimAmountFor(user.address, claimAmount)
-      ).to.be.revertedWithCustomError(yieldStreamerUnderAdmin, ERRORS.YieldStreamer_ClaimAmountNonRounded);
+        yieldStreamer.addYieldRate(
+          groupId,
+          wrongEffectiveDay,
+          getTierRates(YIELD_RATES2[0]),
+          getTierCaps(YIELD_RATES2[0])
+        )
+      ).revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.SafeCastOverflowedUintDowncast
+      ).withArgs(16, wrongEffectiveDay);
+    });
+
+    it("Is reverted if the provided rate is greater than uint48 max value", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const wrongRate = maxUintForBits(48) + 1n;
+
+      await expect(
+        yieldStreamer.addYieldRate(
+          groupId,
+          EFFECTIVE_DAY_ZERO,
+          [wrongRate],
+          [CAP_ZERO]
+        )
+      ).revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.SafeCastOverflowedUintDowncast
+      ).withArgs(48, wrongRate);
+    });
+
+    it("Is reverted if the provided cap is greater than uint64 max value", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const wrongCap = maxUintForBits(64) + 1n;
+
+      await expect(
+        yieldStreamer.addYieldRate(
+          groupId,
+          EFFECTIVE_DAY_ZERO,
+          [RATE_ZERO],
+          [wrongCap]
+        )
+      ).revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.SafeCastOverflowedUintDowncast
+      ).withArgs(64, wrongCap);
     });
   });
 
-  describe("Function 'blockTimestamp()'", async () => {
-    it("Executes as expected", async () => {
+  describe("Function 'updateYieldRate()'", async () => {
+    const groupId = (MAX_GROUP_ID);
+
+    async function executeAndCheck(initialYieldRates: YieldRate[], props: { groupId: bigint; itemIndex: number }) {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      const expectedTimestamp = await getLatestBlockAdjustedTimestamp();
-      const actualTimestamp = await yieldStreamer.blockTimestamp();
-      expect(actualTimestamp).to.equal(expectedTimestamp);
+
+      // Set up test parameters
+      const { groupId, itemIndex } = props;
+      const yieldRateUpdated: YieldRate = { ...initialYieldRates[itemIndex] };
+      yieldRateUpdated.tiers = [{ rate: 123456789n, cap: 987654321n }, { rate: 987654321n, cap: 0n }];
+      if (initialYieldRates.length > 1 && itemIndex != 0) {
+        yieldRateUpdated.effectiveDay =
+          (YIELD_RATES2[itemIndex - 1].effectiveDay + YIELD_RATES2[itemIndex].effectiveDay) / 2n;
+      }
+
+      const tx = yieldStreamer.updateYieldRate(
+        groupId,
+        itemIndex,
+        yieldRateUpdated.effectiveDay,
+        getTierRates(yieldRateUpdated),
+        getTierCaps(yieldRateUpdated)
+      );
+      await proveTx(tx);
+
+      const actualRates: YieldRate[] = (await yieldStreamer.getGroupYieldRates(groupId)).map(normalizeYieldRate);
+      const expectedRates: YieldRate[] = [...initialYieldRates];
+      expectedRates[itemIndex] = yieldRateUpdated;
+      expect(actualRates).to.deep.equal(expectedRates);
+
+      expect(tx)
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldRateUpdated)
+        .withArgs(
+          groupId,
+          itemIndex,
+          yieldRateUpdated.effectiveDay,
+          getTierRates(yieldRateUpdated),
+          getTierCaps(yieldRateUpdated)
+        );
+    }
+
+    describe("Executes as expected if there are several items in the yield rate array and", async () => {
+      it("The item index to update is zero", async () => {
+        expect(YIELD_RATES2.length).greaterThanOrEqual(3);
+        await executeAndCheck(YIELD_RATES2, { groupId, itemIndex: 0 });
+      });
+
+      it("The item index to update is in the middle", async () => {
+        expect(YIELD_RATES2.length).greaterThanOrEqual(3);
+        await executeAndCheck(YIELD_RATES2, { groupId, itemIndex: 1 });
+      });
+
+      it("The item index to update is the last one", async () => {
+        expect(YIELD_RATES2.length).greaterThanOrEqual(3);
+        await executeAndCheck(YIELD_RATES2, { groupId, itemIndex: YIELD_RATES2.length - 1 });
+      });
+    });
+
+    describe("Executes as expected if there is a single item in the yield rate array and", async () => {
+      it("The item index to update is zero", async () => {
+        expect(YIELD_RATES1.length).to.equal(1);
+        await executeAndCheck(YIELD_RATES1, { groupId: DEFAULT_GROUP_ID, itemIndex: 0 });
+      });
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const itemIndex = 1;
+
+      await expect(
+        connect(yieldStreamer, admin).updateYieldRate(
+          groupId,
+          itemIndex,
+          YIELD_RATES2[itemIndex].effectiveDay,
+          getTierRates(YIELD_RATES2[itemIndex]),
+          getTierCaps(YIELD_RATES2[itemIndex])
+        )
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.AccessControlUnauthorizedAccount
+      ).withArgs(admin.address, OWNER_ROLE);
+
+      await expect(
+        connect(yieldStreamer, stranger).updateYieldRate(
+          groupId,
+          itemIndex,
+          YIELD_RATES2[itemIndex].effectiveDay,
+          getTierRates(YIELD_RATES2[itemIndex]),
+          getTierCaps(YIELD_RATES2[itemIndex])
+        )
+      ).to.be.revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.AccessControlUnauthorizedAccount
+      ).withArgs(stranger.address, OWNER_ROLE);
+    });
+
+    it("Is reverted if the being updated yield rate has index 0 but the effective day is non-zero", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const itemIndex = 0;
+      const nonZeroEffectiveDay = 1n;
+
+      await expect(
+        yieldStreamer.updateYieldRate(
+          groupId,
+          itemIndex,
+          nonZeroEffectiveDay,
+          getTierRates(YIELD_RATES2[0]),
+          getTierCaps(YIELD_RATES2[0])
+        )
+      ).revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateInvalidEffectiveDay);
+    });
+
+    it("Is reverted if the yield rate array to update is empty", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const emptyGroupId = 123n;
+      const itemIndex = 0;
+
+      await expect(
+        yieldStreamer.updateYieldRate(
+          emptyGroupId,
+          itemIndex,
+          YIELD_RATES2[0].effectiveDay,
+          getTierRates(YIELD_RATES2[0]),
+          getTierCaps(YIELD_RATES2[0])
+        )
+      ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateInvalidItemIndex);
+    });
+
+    it("Is reverted if the provided item index is greater than the length of the yield rates array", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const lastIndex = YIELD_RATES2.length - 1;
+      const invalidItemIndex = lastIndex + 1;
+
+      await expect(
+        yieldStreamer.updateYieldRate(
+          groupId,
+          invalidItemIndex,
+          YIELD_RATES2[lastIndex].effectiveDay,
+          getTierRates(YIELD_RATES2[lastIndex]),
+          getTierCaps(YIELD_RATES2[lastIndex])
+        )
+      ).revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateInvalidItemIndex);
+    });
+
+    it("Is reverted if the provided tier rates and tier caps arrays are empty", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const emptyArray: bigint[] = [];
+      const itemIndex = 1;
+
+      await expect(yieldStreamer.updateYieldRate(groupId, itemIndex, 0n, emptyArray, emptyArray)).to.be.reverted;
+    });
+
+    it("Is reverted if the provided tier rates and caps arrays have different lengths", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const tierRates1 = [100n, 200n];
+      const tierCaps1 = [300n];
+      // const tierRates2 = [100n];
+      // const tierCaps2 = [200n, 300n];
+      const itemIndex = 1;
+
+      await expect(
+        yieldStreamer.updateYieldRate(
+          groupId,
+          itemIndex,
+          YIELD_RATES2[itemIndex].effectiveDay,
+          tierRates1,
+          tierCaps1
+        )
+      ).to.be.reverted;
+      // await expect(
+      //   yieldStreamer.updateYieldRate(
+      //     groupId,
+      //     itemIndex,
+      //     YIELD_RATES[itemIndex].effectiveDay,
+      //     tierRates2,
+      //     tierCaps2
+      //   )
+      // ).to.be.reverted;
+    });
+
+    it("Is reverted if the new eff. day is not greater than the eff. day of the preceding rate object", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const itemIndexes = [1, 2];
+
+      for (const itemIndex of itemIndexes) {
+        await expect(
+          yieldStreamer.updateYieldRate(
+            groupId,
+            itemIndex,
+            YIELD_RATES2[itemIndex - 1].effectiveDay,
+            getTierRates(YIELD_RATES2[itemIndex]),
+            getTierCaps(YIELD_RATES2[itemIndex])
+          )
+        ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateInvalidEffectiveDay);
+      }
+    });
+
+    it("Is reverted if the new eff. day is not less than the eff. day of the next rate object", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const itemIndexes = [0, 1];
+
+      for (const itemIndex of itemIndexes) {
+        await expect(
+          yieldStreamer.updateYieldRate(
+            groupId,
+            itemIndex,
+            YIELD_RATES2[itemIndex + 1].effectiveDay,
+            getTierRates(YIELD_RATES2[itemIndex]),
+            getTierCaps(YIELD_RATES2[itemIndex])
+          )
+        ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateInvalidEffectiveDay);
+      }
+    });
+
+    it("Is reverted if the new eff. day is greater than uint16 max value", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const itemIndex = YIELD_RATES2.length - 1;
+      const wrongEffectiveDay = maxUintForBits(16) + 1n;
+
+      await expect(
+        yieldStreamer.updateYieldRate(
+          groupId,
+          itemIndex,
+          wrongEffectiveDay,
+          getTierRates(YIELD_RATES2[itemIndex]),
+          getTierCaps(YIELD_RATES2[itemIndex])
+        )
+      ).revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.SafeCastOverflowedUintDowncast
+      ).withArgs(16, wrongEffectiveDay);
+    });
+
+    it("Is reverted if the new rate is greater than uint48 max value", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const itemIndex = YIELD_RATES2.length - 1;
+      const wrongRate = maxUintForBits(48) + 1n;
+
+      await expect(
+        yieldStreamer.updateYieldRate(
+          groupId,
+          itemIndex,
+          YIELD_RATES2[itemIndex].effectiveDay,
+          [wrongRate],
+          [CAP_ZERO]
+        )
+      ).revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.SafeCastOverflowedUintDowncast
+      ).withArgs(48, wrongRate);
+    });
+
+    it("Is reverted if the new cap is greater than uint64 max value", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const itemIndex = YIELD_RATES2.length - 1;
+      const wrongCap = maxUintForBits(64) + 1n;
+
+      await expect(
+        yieldStreamer.updateYieldRate(
+          groupId,
+          itemIndex,
+          YIELD_RATES2[itemIndex].effectiveDay,
+          [RATE_ZERO],
+          [wrongCap]
+        )
+      ).revertedWithCustomError(
+        yieldStreamer,
+        ERRORS.SafeCastOverflowedUintDowncast
+      ).withArgs(64, wrongCap);
     });
   });
 
-  describe("Function 'proveYieldStreamer()'", async () => {
+  describe("Function 'assignGroup()'", async () => {
+    const groupId1 = 1n;
+    const groupId2 = (MAX_GROUP_ID);
+    describe("Executes as expected if", async () => {
+      it("The provided account array is NOT empty", async () => {
+        const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+        await addYieldRates(yieldStreamer, [{ effectiveDay: 0n, tiers: [{ rate: RATE_40, cap: 0n }] }], groupId1);
+
+        // Assign one account to the group without yield accrual
+        {
+          const accounts = [users[0].address];
+          const forceYieldAccrue = false;
+          const tx = yieldStreamer.assignGroup(groupId1, accounts, forceYieldAccrue);
+          await proveTx(tx);
+
+          const actualGroups1 = await getGroupsForAccounts(yieldStreamer, accounts);
+          expect(actualGroups1).to.deep.equal([groupId1]);
+
+          await expect(tx)
+            .to.emit(yieldStreamer, EVENTS.YieldStreamer_GroupAssigned)
+            .withArgs(users[0].address, groupId1, DEFAULT_GROUP_ID);
+          await expect(tx).not.to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldAccrued);
+        }
+
+        // Assign two accounts to the new group with yield accrual
+        {
+          const accounts = [users[0].address, users[1].address];
+          const forceYieldAccrue = true;
+
+          const tx = yieldStreamer.assignGroup(groupId2, accounts, forceYieldAccrue);
+          await proveTx(tx);
+
+          const actualGroups2 = await getGroupsForAccounts(yieldStreamer, accounts);
+          expect(actualGroups2).to.deep.equal([groupId2, groupId2]);
+
+          await expect(tx)
+            .to.emit(yieldStreamer, EVENTS.YieldStreamer_GroupAssigned)
+            .withArgs(accounts[0], groupId2, groupId1);
+          await expect(tx)
+            .to.emit(yieldStreamer, EVENTS.YieldStreamer_GroupAssigned)
+            .withArgs(accounts[1], groupId2, DEFAULT_GROUP_ID);
+          await expect(tx)
+            .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldAccrued)
+            .withArgs(accounts[0], anyValue, anyValue, anyValue, anyValue);
+          await expect(tx)
+            .to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldAccrued)
+            .withArgs(accounts[1], anyValue, anyValue, anyValue, anyValue);
+        }
+      });
+      it("The provided account array is empty", async () => {
+        const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+        await expect(yieldStreamer.assignGroup(groupId2, [], false)).not.to.be.reverted;
+      });
+    });
+
+    describe("Is reverted if", async () => {
+      it("The caller does not have the owner role", async () => {
+        const { yieldStreamer } = await setUpFixture(deployContracts);
+        const accounts = [users[0].address];
+        const forceYieldAccrue = false;
+
+        await expect(connect(yieldStreamer, admin).assignGroup(MAX_GROUP_ID, accounts, forceYieldAccrue))
+          .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+          .withArgs(admin.address, OWNER_ROLE);
+        await expect(connect(yieldStreamer, stranger).assignGroup(MAX_GROUP_ID, accounts, forceYieldAccrue))
+          .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+          .withArgs(stranger.address, OWNER_ROLE);
+      });
+
+      it("The group is already assigned", async () => {
+        const { yieldStreamer } = await setUpFixture(deployContracts);
+        const accounts = [users[0].address];
+        const forceYieldAccrue = false;
+
+        await expect(
+          yieldStreamer.assignGroup(DEFAULT_GROUP_ID, accounts, forceYieldAccrue)
+        ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_GroupAlreadyAssigned);
+
+        await proveTx(yieldStreamer.assignGroup(MAX_GROUP_ID, accounts, forceYieldAccrue));
+
+        await expect(
+          yieldStreamer.assignGroup(MAX_GROUP_ID, accounts, forceYieldAccrue)
+        ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_GroupAlreadyAssigned);
+      });
+    });
+  });
+
+  describe("Function 'setFeeReceiver()'", async () => {
     it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      // Initial fee receiver setup
+      await expect(yieldStreamer.setFeeReceiver(feeReceiver.address))
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_FeeReceiverChanged)
+        .withArgs(feeReceiver.address, ADDRESS_ZERO);
+
+      expect(await yieldStreamer.feeReceiver()).to.equal(feeReceiver.address);
+
+      // Fee receiver reset
+      await expect(yieldStreamer.setFeeReceiver(ADDRESS_ZERO))
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_FeeReceiverChanged)
+        .withArgs(ADDRESS_ZERO, feeReceiver.address);
+
+      expect(await yieldStreamer.feeReceiver()).to.equal(ADDRESS_ZERO);
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      await expect(connect(yieldStreamer, stranger).setFeeReceiver(feeReceiver.address))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+        .withArgs(stranger.address, OWNER_ROLE);
+    });
+
+    it("Is reverted if provided receiver is the same as the current one", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      // Set the receiver to zero
+      await expect(yieldStreamer.setFeeReceiver(ADDRESS_ZERO))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_FeeReceiverAlreadyConfigured);
+
+      // Set the receiver to the non-zero address
+      await proveTx(yieldStreamer.setFeeReceiver(feeReceiver.address));
+
+      // Try to set the receiver to the same non-zero address
+      await expect(yieldStreamer.setFeeReceiver(feeReceiver.address))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_FeeReceiverAlreadyConfigured);
+    });
+  });
+
+  describe("Function 'setSourceYieldStreamer()'", async () => {
+    const sourceYieldStreamerAddressStub = "0x0000000000000000000000000000000000000001";
+
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      // Can be set to non-zero
+      await expect(yieldStreamer.setSourceYieldStreamer(sourceYieldStreamerAddressStub))
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_SourceYieldStreamerChanged)
+        .withArgs(ADDRESS_ZERO, sourceYieldStreamerAddressStub);
+
+      expect(await yieldStreamer.sourceYieldStreamer()).to.equal(sourceYieldStreamerAddressStub);
+
+      // Can be set to zero
+      await expect(yieldStreamer.setSourceYieldStreamer(ADDRESS_ZERO))
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_SourceYieldStreamerChanged)
+        .withArgs(sourceYieldStreamerAddressStub, ADDRESS_ZERO);
+
+      expect(await yieldStreamer.sourceYieldStreamer()).to.equal(ADDRESS_ZERO);
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      await expect(connect(yieldStreamer, stranger).setSourceYieldStreamer(sourceYieldStreamerAddressStub))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+        .withArgs(stranger.address, OWNER_ROLE);
+    });
+
+    it("Is reverted if the new source yield streamer is the same", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      // Check for the zero initial address
+      await expect(yieldStreamer.setSourceYieldStreamer(ADDRESS_ZERO))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_SourceYieldStreamerAlreadyConfigured);
+
+      // Check for a non-zero initial address
+      await proveTx(yieldStreamer.setSourceYieldStreamer(sourceYieldStreamerAddressStub));
+      await expect(yieldStreamer.setSourceYieldStreamer(sourceYieldStreamerAddressStub))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_SourceYieldStreamerAlreadyConfigured);
+    });
+  });
+
+  describe("Function 'mapSourceYieldStreamerGroup()'", async () => {
+    async function executeAndCheck(
+      yieldStreamer: Contract,
+      props: { groupKey: string; newGroupId: bigint; oldGroupId: bigint }
+    ) {
+      const { groupKey, newGroupId, oldGroupId } = props;
+      await expect(yieldStreamer.mapSourceYieldStreamerGroup(groupKey, newGroupId))
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_GroupMapped)
+        .withArgs(groupKey, newGroupId, oldGroupId);
+      // Call via the testable version
+      expect(await yieldStreamer.getSourceGroupMapping(groupKey)).to.equal(newGroupId);
+    }
+
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      // The zero group key can be mapped to a non-zero group ID
+      await executeAndCheck(
+        yieldStreamer,
+        { groupKey: DEFAULT_SOURCE_GROUP_KEY, newGroupId: MAX_GROUP_ID, oldGroupId: DEFAULT_GROUP_ID }
+      );
+
+      // The zero group key can be mapped to the zero group ID
+      await executeAndCheck(
+        yieldStreamer,
+        { groupKey: DEFAULT_SOURCE_GROUP_KEY, newGroupId: DEFAULT_GROUP_ID, oldGroupId: MAX_GROUP_ID }
+      );
+
+      // The non-zero group key can be mapped to the non-zero group IDs
+      await executeAndCheck(
+        yieldStreamer,
+        {
+          groupKey: "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          newGroupId: MAX_GROUP_ID,
+          oldGroupId: DEFAULT_GROUP_ID
+        }
+      );
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const groupKey = (DEFAULT_SOURCE_GROUP_KEY);
+
+      await expect(connect(yieldStreamer, stranger).mapSourceYieldStreamerGroup(groupKey, MAX_GROUP_ID))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+        .withArgs(stranger.address, OWNER_ROLE);
+    });
+
+    it("Is reverted if source yield streamer group already mapped", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const groupKey = (DEFAULT_SOURCE_GROUP_KEY);
+
+      // Check for the zero initial group ID
+      await expect(
+        yieldStreamer.mapSourceYieldStreamerGroup(groupKey, DEFAULT_GROUP_ID)
+      ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_SourceYieldStreamerGroupAlreadyMapped);
+
+      // Check for a non-zero initial group ID
+      await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(groupKey, MAX_GROUP_ID));
+      await expect(yieldStreamer.mapSourceYieldStreamerGroup(groupKey, MAX_GROUP_ID))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_SourceYieldStreamerGroupAlreadyMapped);
+    });
+  });
+
+  describe("Function 'setInitializedFlag()'", async () => {
+    async function executeAndCheck(
+      yieldStreamer: Contract,
+      props: { newFlagState: boolean; oldFlagState: boolean }
+    ) {
+      const { newFlagState, oldFlagState } = props;
+      const userAddress = users[0].address;
+
+      const tx = yieldStreamer.setInitializedFlag(userAddress, newFlagState);
+      await proveTx(tx);
+
+      const expectedYieldState: YieldState = { ...defaultYieldState, flags: newFlagState ? 1n : 0n };
+      const actualYieldState = await yieldStreamer.getYieldState(userAddress);
+      checkEquality(actualYieldState, expectedYieldState);
+
+      if (newFlagState !== oldFlagState) {
+        await expect(tx)
+          .to.emit(yieldStreamer, EVENTS.YieldStreamer_InitializedFlagSet)
+          .withArgs(userAddress, newFlagState);
+      } else {
+        await expect(tx).not.to.emit(yieldStreamer, EVENTS.YieldStreamer_InitializedFlagSet);
+      }
+    }
+
+    it("Executes as expected in different cases", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      checkEquality(await yieldStreamer.getYieldState(users[0].address), defaultYieldState);
+
+      // Check change: 0 => 1
+      await executeAndCheck(yieldStreamer, { newFlagState: true, oldFlagState: false });
+
+      // Check change: 1 => 1
+      await executeAndCheck(yieldStreamer, { newFlagState: true, oldFlagState: true });
+
+      // Check change: 1 => 0
+      await executeAndCheck(yieldStreamer, { newFlagState: false, oldFlagState: true });
+
+      // Check change: 0 => 0
+      await executeAndCheck(yieldStreamer, { newFlagState: false, oldFlagState: false });
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+
+      await expect(connect(yieldStreamer, stranger).setInitializedFlag(users[0].address, true))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+        .withArgs(stranger.address, OWNER_ROLE);
+    });
+  });
+
+  describe("Function 'initializeAccounts()'", async () => {
+    it("Executes as expected", async () => {
+      const { yieldStreamer, yieldStreamerV1Mock, tokenMock } = await setUpFixture(deployAndConfigureContracts);
+      const accounts = [users[0].address, users[1].address, users[2].address];
+      const balances = [maxUintForBits(64), 1n, 123n];
+      const groupKey = (DEFAULT_SOURCE_GROUP_KEY);
+      const groupId = 123456789;
+      const claimPreviewResults: YieldStreamerV1ClaimResult[] = [
+        { ...yieldStreamerV1ClaimResult, primaryYield: maxUintForBits(64) - 1n, lastDayPartialYield: 1n },
+        { ...yieldStreamerV1ClaimResult, primaryYield: 1n, lastDayPartialYield: 2n },
+        { ...yieldStreamerV1ClaimResult }
+      ];
+
+      await proveTx(yieldStreamer.mapSourceYieldStreamerGroup(groupKey, groupId));
+      for (let i = 0; i < accounts.length; ++i) {
+        const actualYieldState = await yieldStreamer.getYieldState(accounts[i]);
+        checkEquality(actualYieldState, defaultYieldState, i);
+        await proveTx(yieldStreamerV1Mock.setClaimAllPreview(accounts[i], claimPreviewResults[i]));
+        await proveTx(tokenMock.mint(accounts[i], balances[i]));
+      }
+
+      const tx = yieldStreamer.initializeAccounts(accounts);
+      const expectedBlockTimestamp = adjustTimestamp(await getTxTimestamp(tx));
+
+      const expectedYieldStates: YieldState[] = claimPreviewResults.map((res, i) => ({
+        flags: 1n,
+        streamYield: 0n,
+        accruedYield: res.primaryYield + res.lastDayPartialYield,
+        lastUpdateTimestamp: expectedBlockTimestamp,
+        lastUpdateBalance: balances[i]
+      }));
+
+      for (let i = 0; i < accounts.length; ++i) {
+        const account = accounts[i];
+        const actualYieldState = await yieldStreamer.getYieldState(account);
+        checkEquality(actualYieldState, expectedYieldStates[i], i);
+        await expect(tx)
+          .to.emit(yieldStreamer, EVENTS.YieldStreamer_AccountInitialized)
+          .withArgs(
+            account,
+            groupId,
+            balances[i],
+            expectedYieldStates[i].accruedYield,
+            0 // streamYield
+          );
+        await expect(tx)
+          .to.emit(yieldStreamerV1Mock, EVENTS.YieldStreamerV1Mock_BlocklistCalled)
+          .withArgs(accounts[i]);
+      }
+    });
+
+    it("Is reverted if the caller does not have the owner role", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
-      await expect(yieldStreamer.proveYieldStreamer()).to.not.be.reverted;
+
+      await expect(connect(yieldStreamer, stranger).initializeAccounts([users[0].address]))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+        .withArgs(stranger.address, OWNER_ROLE);
+    });
+
+    it("Is reverted if accounts array is empty", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+
+      await expect(yieldStreamer.initializeAccounts([]))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_EmptyArray);
+    });
+
+    it("Is reverted if the yield streamer source is not configured", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      await proveTx(yieldStreamer.setSourceYieldStreamer(ADDRESS_ZERO));
+
+      await expect(yieldStreamer.initializeAccounts([users[0].address]))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_SourceYieldStreamerNotConfigured);
+    });
+
+    it("Is reverted if the contract does not have the blocklister role in the source yield streamer", async () => {
+      const { yieldStreamer, yieldStreamerV1Mock } = await setUpFixture(deployAndConfigureContracts);
+      await proveTx(yieldStreamerV1Mock.setBlocklister(getAddress(yieldStreamer), false));
+
+      await expect(yieldStreamer.initializeAccounts([users[0].address]))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_SourceYieldStreamerUnauthorizedBlocklister);
+    });
+
+    it("Is reverted if an account is already initialized", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const accounts = [users[0].address, users[0].address];
+      await proveTx(await yieldStreamer.initializeAccounts([accounts[1]]));
+
+      await expect(yieldStreamer.initializeAccounts(accounts))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_AccountAlreadyInitialized);
+    });
+
+    it("Is reverted if one of provided account addresses is zero", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const accounts = [users[0].address, ADDRESS_ZERO];
+
+      await expect(yieldStreamer.initializeAccounts(accounts))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_AccountInitializationProhibited);
     });
   });
 
   describe("Function 'afterTokenTransfer()'", async () => {
-    describe("Executes as expected in the case of", async () => {
-      it("An increasing balance scenario with a single yield rate and a cap", async () => {
+    describe("Executes as expected in the case of scenario with multiple balance changes when", async () => {
+      it("The balance mainly increases and there is a single yield rate and a cap", async () => {
         const fixture = await setUpFixture(deployContracts);
 
         // Yield rates to be added to the contract
@@ -593,7 +1435,7 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
         await executeBalanceActionsAndCheck(fixture, yieldRates, balanceActions);
       });
 
-      it("An increasing balance scenario with multiple yield rates and caps", async () => {
+      it("The balance mainly increases and there are multiple yield rates and caps", async () => {
         const fixture = await setUpFixture(deployContracts);
 
         const adjustedBlockTime = await getNearestDayEndAdjustedTimestamp();
@@ -741,7 +1583,7 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
         await executeBalanceActionsAndCheck(fixture, yieldRates, balanceActions);
       });
 
-      it("A decreasing balance scenario with a single yield rates and a cap", async () => {
+      it("The balance mainly decreases and there is a single yield rate and a cap", async () => {
         const fixture = await setUpFixture(deployContracts);
 
         // Yield rates to be added to the contract
@@ -868,7 +1710,7 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
         await executeBalanceActionsAndCheck(fixture, yieldRates, balanceActions);
       });
 
-      it("A decreasing balance scenario with multiple yield rates and caps", async () => {
+      it("The balance mainly decreases and there are multiple yield rates and caps", async () => {
         const fixture = await setUpFixture(deployContracts);
 
         const adjustedBlockTime = await getNearestDayEndAdjustedTimestamp();
@@ -1016,11 +1858,50 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
         await executeBalanceActionsAndCheck(fixture, yieldRates, balanceActions);
       });
     });
+
+    describe("Executes as expected when the account is not initialized and", async () => {
+      async function executeAndCheck(props: { balanceChange: bigint }) {
+        const { yieldStreamer, tokenMock } = await setUpFixture(deployAndConfigureContracts);
+        const startDayTimestamp = await getNearestDayEndAdjustedTimestamp() + 1n;
+        const accountAddress = users[0].address;
+        const expectedYieldState: YieldState = {
+          ...defaultYieldState,
+          flags: 0n,
+          accruedYield: 1234567n,
+          lastUpdateTimestamp: startDayTimestamp,
+          lastUpdateBalance: 987654321n
+        };
+        // Call via the testable version
+        await proveTx(yieldStreamer.setYieldState(accountAddress, expectedYieldState));
+        await proveTx(tokenMock.mint(accountAddress, expectedYieldState.lastUpdateBalance));
+        await proveTx(tokenMock.setHook(getAddress(yieldStreamer)));
+        await increaseBlockTimestampTo(normalizeTimestamp(startDayTimestamp + 3n * HOUR));
+
+        let tx: Promise<TransactionResponse>;
+        if (props.balanceChange >= 0) {
+          tx = tokenMock.mint(accountAddress, props.balanceChange);
+        } else {
+          tx = tokenMock.burn(accountAddress, -props.balanceChange);
+        }
+
+        await expect(tx).not.to.emit(yieldStreamer, EVENTS.YieldStreamer_AccountInitialized);
+        await expect(tx).not.to.emit(yieldStreamer, EVENTS.YieldStreamer_YieldAccrued);
+      }
+
+      it("The balance increases", async () => {
+        await executeAndCheck({ balanceChange: 123n });
+      });
+
+      it("The balance increases", async () => {
+        await executeAndCheck({ balanceChange: -123n });
+      });
+    });
+
     describe("Is reverted if", async () => {
       it("It is called not by a token contract", async () => {
         const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
         const fromAddress = (ADDRESS_ZERO);
-        const toAddress = user.address;
+        const toAddress = users[0].address;
         const amount = 1n;
 
         await expect(
@@ -1031,6 +1912,357 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
           connect(yieldStreamer, admin).afterTokenTransfer(fromAddress, toAddress, amount)
         ).to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_HookCallerUnauthorized);
       });
+    });
+  });
+
+  describe("Function 'beforeTokenTransfer()", async () => {
+    it("Executes by any account without any consequences", async () => {
+      const { yieldStreamer } = await setUpFixture(deployContracts);
+      const from = (ADDRESS_ZERO);
+      const to = (users[0].address);
+      const amount = 123456n;
+      await expect(connect(yieldStreamer, stranger).beforeTokenTransfer(from, to, amount)).not.to.be.reverted;
+    });
+  });
+
+  describe("Function 'claimAmountFor()'", async () => {
+    // Should handle claims for accounts with zero yielded balance gracefully by reverting appropriately.
+    // Should correctly handle claims immediately after yield accrual without delays.
+    // Should revert if the _accrueYield function fails during the claim process.
+    async function executeAndCheck(props: {
+      startDayBalance: bigint;
+      accruedYield: bigint;
+      claimAmount: bigint;
+      relativeClaimTimestamp: bigint;
+    }) {
+      const { yieldStreamerUnderAdmin, tokenMock } = await setUpFixture(deployAndConfigureContracts);
+      const startDayTimestamp = await getNearestDayEndAdjustedTimestamp() + 1n;
+
+      // Set the yield state for the user with claimable yield
+      const account = users[0];
+      const claimAmount = props.claimAmount;
+      const expectedYieldState: YieldState = {
+        ...defaultYieldState,
+        flags: STATE_FLAG_INITIALIZED,
+        streamYield: 0n,
+        accruedYield: props.accruedYield,
+        lastUpdateTimestamp: startDayTimestamp,
+        lastUpdateBalance: props.startDayBalance
+      };
+      // Compute expected fee and net amount
+      const fee = (claimAmount * FEE_RATE) / ROUND_FACTOR;
+      const netAmount = claimAmount - fee;
+
+      await proveTx(
+        yieldStreamerUnderAdmin.setYieldState(account.address, expectedYieldState) // Call via the testable version
+      );
+      await tokenMock.setHook(getAddress(yieldStreamerUnderAdmin));
+      await increaseBlockTimestampTo(normalizeTimestamp(startDayTimestamp + props.relativeClaimTimestamp));
+
+      // Execute yield claim
+      const tx = await yieldStreamerUnderAdmin.claimAmountFor(account.address, claimAmount);
+      const expectedTimestamp = adjustTimestamp(await getTxTimestamp(tx));
+
+      // Check that the yield state for the user is reset (accrued yield becomes 0)
+      const updatedYieldState = await yieldStreamerUnderAdmin.getYieldState(account.address);
+      expectedYieldState.streamYield = calculateStreamYield(expectedYieldState, RATE, expectedTimestamp);
+      if (claimAmount > expectedYieldState.accruedYield) {
+        expectedYieldState.streamYield -= claimAmount - expectedYieldState.accruedYield;
+        expectedYieldState.accruedYield = 0n;
+      } else {
+        expectedYieldState.accruedYield -= claimAmount;
+      }
+      expectedYieldState.lastUpdateBalance += claimAmount;
+      expectedYieldState.lastUpdateTimestamp = expectedTimestamp;
+      checkEquality(updatedYieldState, expectedYieldState);
+
+      // Check balance changes
+      await expect(tx).to.changeTokenBalances(
+        tokenMock,
+        [yieldStreamerUnderAdmin, feeReceiver, account],
+        [-claimAmount, fee, netAmount]
+      );
+
+      // Check that the expected event was emitted
+      await expect(tx)
+        .to.emit(yieldStreamerUnderAdmin, EVENTS.YieldStreamer_YieldTransferred)
+        .withArgs(users[0].address, netAmount, fee);
+    }
+
+    describe("Executes as expected if the last yield state change was exactly at the day start and", async () => {
+      it("The claim amount is less than the accrued yield", async () => {
+        await executeAndCheck({
+          startDayBalance: MIN_CLAIM_AMOUNT * 1000n,
+          accruedYield: MIN_CLAIM_AMOUNT * 100n,
+          claimAmount: MIN_CLAIM_AMOUNT * 10n,
+          relativeClaimTimestamp: 3n * HOUR
+        });
+      });
+
+      it("There is only the accrued yield non-zero and it matches the min claim amount", async () => {
+        await executeAndCheck({
+          startDayBalance: 0n,
+          accruedYield: MIN_CLAIM_AMOUNT,
+          claimAmount: MIN_CLAIM_AMOUNT,
+          relativeClaimTimestamp: 0n
+        });
+      });
+
+      it("The claim amount is greater than the accrued yield", async () => {
+        const accruedYield = MIN_CLAIM_AMOUNT * 100n;
+        await executeAndCheck({
+          startDayBalance: 0n,
+          accruedYield,
+          claimAmount: accruedYield + accruedYield * RATE * 12n / (RATE_FACTOR * 24n),
+          relativeClaimTimestamp: 18n * HOUR
+        });
+      });
+
+      it("The claim amount almost equals to the accrued yield and stream yield", async () => {
+        const accruedYield = MIN_CLAIM_AMOUNT * 100n;
+        await executeAndCheck({
+          startDayBalance: 0n,
+          accruedYield,
+          claimAmount: accruedYield + accruedYield * RATE * 12n / (RATE_FACTOR * 24n),
+          relativeClaimTimestamp: 12n * HOUR
+        });
+      });
+    });
+
+    it("Is reverted if the caller does not have the admin role", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+
+      await expect(connect(yieldStreamer, deployer).claimAmountFor(users[0].address, 0))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+        .withArgs(deployer.address, ADMIN_ROLE);
+      await expect(connect(yieldStreamer, stranger).claimAmountFor(users[0].address, 0))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+        .withArgs(stranger.address, ADMIN_ROLE);
+    });
+
+    it("Is reverted if the amount is less than the minimum claim amount", async () => {
+      const { yieldStreamerUnderAdmin } = await setUpFixture(deployAndConfigureContracts);
+      const claimAmount = MIN_CLAIM_AMOUNT - 1n;
+
+      await expect(
+        yieldStreamerUnderAdmin.claimAmountFor(users[0].address, claimAmount)
+      ).to.be.revertedWithCustomError(yieldStreamerUnderAdmin, ERRORS.YieldStreamer_ClaimAmountBelowMinimum);
+    });
+
+    it("Is reverted is the amount is not rounded down to the required precision", async () => {
+      const { yieldStreamerUnderAdmin } = await setUpFixture(deployAndConfigureContracts);
+      const claimAmount = MIN_CLAIM_AMOUNT + 1n;
+
+      await expect(
+        yieldStreamerUnderAdmin.claimAmountFor(users[0].address, claimAmount)
+      ).to.be.revertedWithCustomError(yieldStreamerUnderAdmin, ERRORS.YieldStreamer_ClaimAmountNonRounded);
+    });
+
+    it("Is reverted if the account is not initialized", async () => {
+      const { yieldStreamerUnderAdmin } = await setUpFixture(deployAndConfigureContracts);
+
+      await expect(
+        yieldStreamerUnderAdmin.claimAmountFor(users[0].address, MIN_CLAIM_AMOUNT)
+      ).to.be.revertedWithCustomError(yieldStreamerUnderAdmin, ERRORS.YieldStreamer_AccountNotInitialized);
+    });
+
+    it("Is reverted if the claim amount exceeds the total available yield for the account", async () => {
+      const { yieldStreamerUnderAdmin } = await setUpFixture(deployAndConfigureContracts);
+      const yieldState: YieldState = {
+        ...defaultYieldState,
+        flags: STATE_FLAG_INITIALIZED,
+        accruedYield: MIN_CLAIM_AMOUNT,
+        lastUpdateTimestamp: await getLatestBlockAdjustedTimestamp()
+      };
+      // Call via the testable version
+      await proveTx(yieldStreamerUnderAdmin.setYieldState(users[0].address, yieldState));
+
+      await expect(
+        yieldStreamerUnderAdmin.claimAmountFor(users[0].address, yieldState.accruedYield + ROUND_FACTOR)
+      ).to.be.revertedWithCustomError(yieldStreamerUnderAdmin, ERRORS.YieldStreamer_YieldBalanceInsufficient);
+    });
+
+    it("Is reverted if the underlying token transfer fails due to insufficient balance in the contract", async () => {
+      const { yieldStreamerUnderAdmin, tokenMock } = await setUpFixture(deployAndConfigureContracts);
+      const yieldState: YieldState = {
+        ...defaultYieldState,
+        flags: STATE_FLAG_INITIALIZED,
+        accruedYield: MIN_CLAIM_AMOUNT,
+        lastUpdateTimestamp: await getLatestBlockAdjustedTimestamp()
+      };
+      // Call via the testable version
+      await proveTx(yieldStreamerUnderAdmin.setYieldState(users[0].address, yieldState));
+      await proveTx(
+        tokenMock.burn(getAddress(yieldStreamerUnderAdmin), INITIAL_YIELD_STREAMER_BALANCE - MIN_CLAIM_AMOUNT + 1n)
+      );
+
+      await expect(
+        yieldStreamerUnderAdmin.claimAmountFor(users[0].address, MIN_CLAIM_AMOUNT)
+      ).to.be.revertedWithCustomError(tokenMock, ERRORS.ERC20InsufficientBalance);
+    });
+  });
+
+  describe("Function 'getAccruePreview()'", async () => {
+    async function executeAndCheck(expectedYieldState: YieldState) {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      await proveTx(yieldStreamer.setYieldState(users[0].address, expectedYieldState)); // Call via the testable version
+
+      let timestamp = expectedYieldState.lastUpdateTimestamp + 3n * HOUR;
+      await increaseBlockTimestampTo(normalizeTimestamp(timestamp));
+      const actualAccruePreviewRaw = await yieldStreamer.getAccruePreview(users[0].address);
+      timestamp = await getLatestBlockAdjustedTimestamp();
+
+      const additionalYield = calculateStreamYield(expectedYieldState, RATE, timestamp);
+      const streamYieldAfter = expectedYieldState.streamYield + additionalYield;
+      const yieldBase = expectedYieldState.accruedYield + expectedYieldState.lastUpdateBalance;
+      const expectedAccruePreview: AccruePreview = {
+        fromTimestamp: expectedYieldState.lastUpdateTimestamp,
+        toTimestamp: timestamp,
+        balance: expectedYieldState.lastUpdateBalance,
+        streamYieldBefore: expectedYieldState.streamYield,
+        accruedYieldBefore: expectedYieldState.accruedYield,
+        streamYieldAfter: streamYieldAfter,
+        accruedYieldAfter: expectedYieldState.accruedYield,
+        rates: [{ tiers: [{ rate: RATE, cap: 0n }], effectiveDay: 0n }],
+        results: [{
+          partialFirstDayYield: 0n,
+          fullDaysYield: 0n,
+          partialLastDayYield: streamYieldAfter,
+          partialFirstDayYieldTiered: yieldBase === 0n ? [] : [0n],
+          fullDaysYieldTiered: yieldBase === 0n ? [] : [0n],
+          partialLastDayYieldTiered: yieldBase === 0n ? [] : [additionalYield]
+        }]
+      };
+
+      checkEquality(actualAccruePreviewRaw, expectedAccruePreview, undefined, { ignoreObjects: true });
+      expect(actualAccruePreviewRaw.results.length).to.equal(expectedAccruePreview.results.length);
+      for (let i = 0; i < expectedAccruePreview.results.length; ++i) {
+        const expectedResult = expectedAccruePreview.results[i];
+        const actualResult = actualAccruePreviewRaw.results[i];
+        checkEquality(actualResult, expectedResult, i, { ignoreObjects: true });
+        expect(normalizeYieldResult(actualResult)).to.deep.equal(expectedResult);
+      }
+      const actualAccruePreview = normalizeAccruePreview(await yieldStreamer.getAccruePreview(users[0].address));
+      expect(actualAccruePreview).to.deep.equal(expectedAccruePreview);
+    }
+
+    it("Executes as expected for an initialised account in a simple case", async () => {
+      const startDayTimestamp = await getNearestDayEndAdjustedTimestamp() + 1n;
+      const startTimestamp = startDayTimestamp + 3n * HOUR;
+
+      const yieldState: YieldState = {
+        ...defaultYieldState,
+        flags: STATE_FLAG_INITIALIZED,
+        streamYield: MIN_CLAIM_AMOUNT / 2n,
+        accruedYield: MIN_CLAIM_AMOUNT * 10n,
+        lastUpdateTimestamp: startTimestamp,
+        lastUpdateBalance: MIN_CLAIM_AMOUNT * 100n
+      };
+
+      await executeAndCheck(yieldState);
+    });
+
+    it("Executes as expected for a uninitialised account", async () => {
+      const startDayTimestamp = await getNearestDayEndAdjustedTimestamp() + 1n;
+      const startTimestamp = startDayTimestamp + 3n * HOUR;
+
+      const yieldState: YieldState = { ...defaultYieldState, lastUpdateTimestamp: startTimestamp };
+
+      await executeAndCheck(yieldState);
+    });
+
+    it("Is reverted if the account is in a group with non-configured rates", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const groupId = 123456;
+      await proveTx(yieldStreamer.assignGroup(groupId, [users[0].address], false));
+
+      await expect(yieldStreamer.getAccruePreview(users[0].address))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateArrayIsEmpty);
+    });
+
+    // Other test cases are covered in tests for the internal "_getAccruePreview()" function
+  });
+
+  describe("Function 'getClaimPreview()'", async () => {
+    async function executeAndCheck(expectedYieldState: YieldState) {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      await proveTx(yieldStreamer.setYieldState(users[0].address, expectedYieldState)); // Call via the testable version
+
+      let timestamp = expectedYieldState.lastUpdateTimestamp + 6n * HOUR;
+      await increaseBlockTimestampTo(normalizeTimestamp(timestamp));
+      timestamp = await getLatestBlockAdjustedTimestamp();
+      const actualClaimPreviewRaw = await yieldStreamer.getClaimPreview(users[0].address);
+
+      const additionalYield = calculateStreamYield(expectedYieldState, RATE, timestamp);
+      const totalStreamYield = expectedYieldState.streamYield + additionalYield;
+      const totalClaimableYield = expectedYieldState.accruedYield + totalStreamYield;
+
+      const expectedClaimPreview: ClaimPreview = {
+        yieldExact: totalClaimableYield,
+        yieldRounded: roundDown(totalClaimableYield),
+        feeExact: 0n,
+        feeRounded: 0n,
+        timestamp,
+        balance: expectedYieldState.lastUpdateBalance,
+        rates: [RATE],
+        caps: [0n]
+      };
+
+      checkEquality(actualClaimPreviewRaw, expectedClaimPreview, undefined, { ignoreObjects: true });
+      const actualClaimPreview = normalizeClaimPreview(await yieldStreamer.getClaimPreview(users[0].address));
+      expect(actualClaimPreview).to.deep.equal(expectedClaimPreview);
+    }
+
+    it("Executes as expected for an initialised account in a simple case", async () => {
+      const startDayTimestamp = await getNearestDayEndAdjustedTimestamp() + 1n;
+      const startTimestamp = startDayTimestamp + 4n * HOUR;
+
+      const yieldState: YieldState = {
+        ...defaultYieldState,
+        flags: STATE_FLAG_INITIALIZED,
+        streamYield: MIN_CLAIM_AMOUNT / 3n,
+        accruedYield: MIN_CLAIM_AMOUNT * 10n,
+        lastUpdateTimestamp: startTimestamp,
+        lastUpdateBalance: MIN_CLAIM_AMOUNT * 100n
+      };
+
+      await executeAndCheck(yieldState);
+    });
+
+    it("Executes as expected for a uninitialised account", async () => {
+      const startDayTimestamp = await getNearestDayEndAdjustedTimestamp() + 1n;
+      const startTimestamp = startDayTimestamp + 4n * HOUR;
+
+      const yieldState: YieldState = { ...defaultYieldState, lastUpdateTimestamp: startTimestamp };
+
+      await executeAndCheck(yieldState);
+    });
+
+    it("Is reverted if the account is in a group with non-configured rates", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const groupId = 123456;
+      await proveTx(yieldStreamer.assignGroup(groupId, [users[0].address], false));
+
+      await expect(yieldStreamer.getClaimPreview(users[0].address))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateArrayIsEmpty);
+    });
+
+    // Other test cases are covered in tests for the internal "_getClaimPreview()" function
+  });
+
+  describe("Function 'blockTimestamp()'", async () => {
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      const expectedTimestamp = await getLatestBlockAdjustedTimestamp();
+      const actualTimestamp = await yieldStreamer.blockTimestamp();
+      expect(actualTimestamp).to.equal(expectedTimestamp);
+    });
+  });
+
+  describe("Function 'proveYieldStreamer()'", async () => {
+    it("Executes as expected", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+      await expect(yieldStreamer.proveYieldStreamer()).to.not.be.reverted;
     });
   });
 });
