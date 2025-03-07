@@ -3,13 +3,42 @@
 pragma solidity 0.8.24;
 
 import { YieldStreamer } from "../YieldStreamer.sol";
+import { Bitwise } from "../libs/Bitwise.sol";
 
 /**
  * @title YieldStreamerTestable contract
  * @author CloudWalk Inc. (See https://www.cloudwalk.io)
- * @dev Implements additional functions to test private and internal functions of base contracts.
+ * @dev Implements additional functions to test internal functions of the yield streamer contract.
  */
 contract YieldStreamerTestable is YieldStreamer {
+    // ------------------ Internal initializers ------------------- //
+
+    function call_parent_initialize(address underlyingToken) external {
+        __YieldStreamer_init(underlyingToken);
+    }
+
+    function call_parent_initialize_unchained(address underlyingToken) external {
+        __YieldStreamer_init_init_unchained(underlyingToken);
+    }
+
+    // ------------------ Setters for storage structures ---------- //
+
+    function setYieldState(address account, YieldState calldata newState) external {
+        _yieldStreamerStorage().yieldStates[account] = newState;
+    }
+
+    // ------------------ Getters for storage structures ---------- //
+
+    function getSourceGroupMapping(bytes32 groupKey) external view returns (uint256) {
+        return _yieldStreamerInitializationStorage().groupIds[groupKey];
+    }
+
+    // ------------------ Account initializers -------------------- //
+
+    function initializeSingleAccount(address account) external {
+        _initializeSingleAccount(account);
+    }
+
     // ------------------ Yield calculation ----------------------- //
 
     function getAccruePreview(
@@ -46,7 +75,6 @@ contract YieldStreamerTestable is YieldStreamer {
     ) external pure returns (uint256) {
         return _calculateSimpleYield(amount, rate, elapsedSeconds);
     }
-
 
     function inRangeYieldRates(
         YieldRate[] memory rates,
@@ -90,5 +118,19 @@ contract YieldStreamerTestable is YieldStreamer {
 
     function map(AccruePreview memory accrue) external pure returns (ClaimPreview memory) {
         return _map(accrue);
+    }
+
+    // ------------------ Bitwise functions ----------------------- //
+
+    function setBit(uint8 flags, uint256 bitIndex) external pure returns (uint8) {
+        return Bitwise.setBit(flags, bitIndex);
+    }
+
+    function clearBit(uint8 flags, uint256 bitIndex) external pure returns (uint8) {
+        return Bitwise.clearBit(flags, bitIndex);
+    }
+
+    function isBitSet(uint8 flags, uint256 bitIndex) external pure returns (bool) {
+        return Bitwise.isBitSet(flags, bitIndex);
     }
 }

@@ -31,14 +31,8 @@ contract ERC20TokenMock is ERC20 {
      * @param account The address of an account to mint for.
      * @param amount The amount of tokens to mint.
      */
-    function mint(address account, uint256 amount) external returns (bool) {
+    function mint(address account, uint256 amount) external {
         _mint(account, amount);
-
-        if (_hook != address(0)) {
-            IERC20Hook(_hook).afterTokenTransfer(address(0), account, amount);
-        }
-
-        return true;
     }
 
     /**
@@ -46,14 +40,8 @@ contract ERC20TokenMock is ERC20 {
      * @param account The address of an account to burn for.
      * @param amount The amount of tokens to burn.
      */
-    function burn(address account, uint256 amount) external returns (bool) {
+    function burn(address account, uint256 amount) external {
         _burn(account, amount);
-
-        if (_hook != address(0)) {
-            IERC20Hook(_hook).afterTokenTransfer(account, address(0), amount);
-        }
-
-        return true;
     }
 
     /**
@@ -63,5 +51,20 @@ contract ERC20TokenMock is ERC20 {
     function setHook(address hook) external returns (bool) {
         _hook = hook;
         return true;
+    }
+
+    // ------------------ Internal functions ---------------------- //
+
+    /**
+     * @dev Overrides the default implementation of the {ERC20} contract to call the hook after the transfer.
+     * @param from The address of the sender.
+     * @param to The address of the recipient.
+     * @param value The amount of tokens to transfer.
+     */
+    function _update(address from, address to, uint256 value) internal virtual override {
+        super._update(from, to, value);
+        if (_hook != address(0)) {
+            IERC20Hook(_hook).afterTokenTransfer(from, to, value);
+        }
     }
 }

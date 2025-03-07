@@ -1,7 +1,17 @@
-import { ethers, upgrades } from "hardhat";
+import { ethers, network, upgrades } from "hardhat";
 import { BaseContract, BlockTag, Contract, ContractFactory, TransactionReceipt, TransactionResponse } from "ethers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { expect } from "chai";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
+
+export async function proveTx(tx: Promise<TransactionResponse> | TransactionResponse): Promise<TransactionReceipt> {
+  const txResponse = await tx;
+  const txReceipt = await txResponse.wait();
+  if (!txReceipt) {
+    throw new Error("The transaction receipt is empty");
+  }
+  return txReceipt;
+}
 
 export async function checkContractUupsUpgrading(
   contract: Contract,
@@ -37,6 +47,12 @@ export function getAddress(contract: Contract): string {
   return address;
 }
 
+export async function getTxTimestamp(tx: Promise<TransactionResponse> | TransactionResponse): Promise<number> {
+  const receipt = await proveTx(tx);
+  const block = await ethers.provider.getBlock(receipt.blockNumber);
+  return Number(block?.timestamp ?? 0);
+}
+
 export async function getBlockTimestamp(blockTag: BlockTag): Promise<number> {
   const block = await ethers.provider.getBlock(blockTag);
   return block?.timestamp ?? 0;
@@ -46,25 +62,13 @@ export async function getLatestBlockTimestamp(): Promise<number> {
   return getBlockTimestamp("latest");
 }
 
-export async function proveTx(txResponsePromise: Promise<TransactionResponse>): Promise<TransactionReceipt> {
-  const txResponse = await txResponsePromise;
-  const txReceipt = await txResponse.wait();
-  if (!txReceipt) {
-    throw new Error("The transaction receipt is empty");
+export async function increaseBlockTimestampTo(target: number) {
+  if (network.name === "hardhat") {
+    await time.increaseTo(target);
+  } else if (network.name === "stratus") {
+    await ethers.provider.send("evm_setNextBlockTimestamp", [target]);
+    await ethers.provider.send("evm_mine", []);
+  } else {
+    throw new Error(`Setting block timestamp for the current blockchain is not supported: ${network.name}`);
   }
-  return txReceipt as TransactionReceipt;
-}
-
-export function checkEquality<T extends Record<string, unknown>>(actualObject: T, expectedObject: T, index?: number) {
-  const indexString = !index ? "" : ` with index: ${index}`;
-  Object.keys(expectedObject).forEach(property => {
-    const value = actualObject[property];
-    if (typeof value === "undefined" || typeof value === "function" || typeof value === "object") {
-      throw Error(`Property "${property}" is not found in the actual object` + indexString);
-    }
-    expect(value).to.eq(
-      expectedObject[property],
-      `Mismatch in the "${property}" property between the actual object and expected one` + indexString
-    );
-  });
 }
