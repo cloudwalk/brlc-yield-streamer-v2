@@ -254,6 +254,10 @@ abstract contract YieldStreamerPrimary is
      * @return A `ClaimPreview` struct containing details of the claimable yield.
      */
     function _getClaimPreview(address account, uint256 currentTimestamp) internal view returns (ClaimPreview memory) {
+        if (_yieldStreamerStorage().isArchived) {
+            return ClaimPreview(0, 0, 0, 0, 0, 0, new uint256[](0), new uint256[](0));
+        }
+
         YieldStreamerStorageLayout storage $ = _yieldStreamerStorage();
         YieldState storage state = $.yieldStates[account];
         YieldRate[] storage rates = $.yieldRates[$.groups[account].id];
@@ -268,6 +272,10 @@ abstract contract YieldStreamerPrimary is
      * @return An `AccruePreview` struct containing details of the accrued yield.
      */
     function _getAccruePreview(address account, uint256 currentTimestamp) internal view returns (AccruePreview memory) {
+        if (_yieldStreamerStorage().isArchived) {
+            return AccruePreview(0, 0, 0, 0, 0, 0, 0, new YieldRate[](0), new YieldResult[](0));
+        }
+
         YieldStreamerStorageLayout storage $ = _yieldStreamerStorage();
         YieldState storage state = $.yieldStates[account];
         YieldRate[] storage rates = $.yieldRates[$.groups[account].id];
