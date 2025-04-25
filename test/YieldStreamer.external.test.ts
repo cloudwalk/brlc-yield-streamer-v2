@@ -48,7 +48,8 @@ const EVENTS = {
   YieldStreamer_YieldRateAdded: "YieldStreamer_YieldRateAdded",
   YieldStreamer_YieldRateUpdated: "YieldStreamer_YieldRateUpdated",
   YieldStreamer_YieldTransferred: "YieldStreamer_YieldTransferred",
-  YieldStreamerV1Mock_BlocklistCalled: "YieldStreamerV1Mock_BlocklistCalled"
+  YieldStreamerV1Mock_BlocklistCalled: "YieldStreamerV1Mock_BlocklistCalled",
+  YieldStreamer_IsArchivedChanged: "YieldStreamer_IsArchivedChanged"
 };
 
 const ADDRESS_ZERO = ethers.ZeroAddress;
@@ -171,7 +172,7 @@ interface Fixture {
 
 const EXPECTED_VERSION: Version = {
   major: 2,
-  minor: 2,
+  minor: 3,
   patch: 0
 };
 
@@ -2183,6 +2184,49 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
         .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateArrayIsEmpty);
     });
 
+    it("Returns zeroed values when the contract is archived", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+
+      const currentTimestamp = await getLatestBlockAdjustedTimestamp();
+      const nonZeroState: YieldState = {
+        ...defaultYieldState,
+        flags: STATE_FLAG_INITIALIZED,
+        streamYield: 100n,
+        accruedYield: 200n,
+        lastUpdateTimestamp: currentTimestamp - 3600n,
+        lastUpdateBalance: 1000n
+      };
+
+      await proveTx(yieldStreamer.setYieldState(users[0].address, nonZeroState));
+      const previewBeforeRaw = await yieldStreamer.getAccruePreview(users[0].address);
+      const previewBefore = normalizeAccruePreview(previewBeforeRaw);
+
+      expect(previewBefore).to.include({
+        fromTimestamp: nonZeroState.lastUpdateTimestamp,
+        balance: nonZeroState.lastUpdateBalance,
+        streamYieldBefore: nonZeroState.streamYield,
+        accruedYieldBefore: nonZeroState.accruedYield
+      });
+      expect(previewBefore.rates.length).to.be.greaterThan(0);
+      expect(previewBefore.results.length).to.be.greaterThan(0);
+
+      await proveTx(yieldStreamer.setIsArchived(true));
+      const previewAfterRaw = await yieldStreamer.getAccruePreview(users[0].address);
+      const previewAfter = normalizeAccruePreview(previewAfterRaw);
+
+      expect(previewAfter).to.deep.equal({
+        fromTimestamp: 0n,
+        toTimestamp: 0n,
+        balance: 0n,
+        streamYieldBefore: 0n,
+        accruedYieldBefore: 0n,
+        streamYieldAfter: 0n,
+        accruedYieldAfter: 0n,
+        rates: [],
+        results: []
+      });
+    });
+
     // Other test cases are covered in tests for the internal "_getAccruePreview()" function
   });
 
@@ -2250,6 +2294,44 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
         .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_YieldRateArrayIsEmpty);
     });
 
+    it("Returns zeroed values when the contract is archived", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+
+      const currentTimestamp = await getLatestBlockAdjustedTimestamp();
+      const nonZeroState: YieldState = {
+        ...defaultYieldState,
+        flags: STATE_FLAG_INITIALIZED,
+        streamYield: 100n,
+        accruedYield: 200n,
+        lastUpdateTimestamp: currentTimestamp - 3600n,
+        lastUpdateBalance: 1000n
+      };
+
+      await proveTx(yieldStreamer.setYieldState(users[0].address, nonZeroState));
+      const previewBeforeRaw = await yieldStreamer.getClaimPreview(users[0].address);
+      const previewBefore = normalizeClaimPreview(previewBeforeRaw);
+
+      expect(previewBefore).to.include({ balance: nonZeroState.lastUpdateBalance });
+      expect(previewBefore.rates.length).to.be.greaterThan(0);
+      expect(previewBefore.caps.length).to.be.greaterThan(0);
+      expect(previewBefore.yieldExact).to.be.greaterThanOrEqual(nonZeroState.accruedYield + nonZeroState.streamYield);
+
+      await proveTx(yieldStreamer.setIsArchived(true));
+      const previewAfterRaw = await yieldStreamer.getClaimPreview(users[0].address);
+      const previewAfter = normalizeClaimPreview(previewAfterRaw);
+
+      expect(previewAfter).to.deep.equal({
+        yieldExact: 0n,
+        yieldRounded: 0n,
+        feeExact: 0n,
+        feeRounded: 0n,
+        timestamp: 0n,
+        balance: 0n,
+        rates: [],
+        caps: []
+      });
+    });
+
     // Other test cases are covered in tests for the internal "_getClaimPreview()" function
   });
 
@@ -2266,6 +2348,44 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
     it("Executes as expected", async () => {
       const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
       await expect(yieldStreamer.proveYieldStreamer()).to.not.be.reverted;
+    });
+  });
+
+  describe("Function 'setIsArchived()'", async () => {
+    it("Sets the isArchived flag correctly when called by owner", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+
+      expect(await yieldStreamer.isArchived()).to.equal(false);
+
+      await expect(yieldStreamer.setIsArchived(true))
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_IsArchivedChanged)
+        .withArgs(true);
+
+      expect(await yieldStreamer.isArchived()).to.equal(true);
+
+      await expect(yieldStreamer.setIsArchived(false))
+        .to.emit(yieldStreamer, EVENTS.YieldStreamer_IsArchivedChanged)
+        .withArgs(false);
+
+      expect(await yieldStreamer.isArchived()).to.equal(false);
+    });
+
+    it("Reverts when trying to archive an already archived contract", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+
+      await proveTx(yieldStreamer.setIsArchived(true));
+      expect(await yieldStreamer.isArchived()).to.equal(true);
+
+      await expect(yieldStreamer.setIsArchived(true))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.YieldStreamer_ContractAlreadyArchived);
+    });
+
+    it("Reverts when called by non-owner", async () => {
+      const { yieldStreamer } = await setUpFixture(deployAndConfigureContracts);
+
+      await expect(connect(yieldStreamer, stranger).setIsArchived(true))
+        .to.be.revertedWithCustomError(yieldStreamer, ERRORS.AccessControlUnauthorizedAccount)
+        .withArgs(stranger.address, OWNER_ROLE);
     });
   });
 });

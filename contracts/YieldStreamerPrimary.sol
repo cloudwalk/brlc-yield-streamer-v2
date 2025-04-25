@@ -286,7 +286,11 @@ abstract contract YieldStreamerPrimary is
         YieldState memory state,
         YieldRate[] memory rates,
         uint256 currentTimestamp
-    ) public pure returns (AccruePreview memory) {
+    ) public view returns (AccruePreview memory) {
+        if (_yieldStreamerStorage().isArchived) {
+            return AccruePreview(0, 0, 0, 0, 0, 0, 0, new YieldRate[](0), new YieldResult[](0));
+        }
+
         AccruePreview memory preview;
 
         preview.balance = state.lastUpdateBalance;
@@ -1042,17 +1046,19 @@ abstract contract YieldStreamerPrimary is
         claimPreview.timestamp = accruePreview.toTimestamp;
         claimPreview.balance = accruePreview.balance;
 
-        uint256 lastRateIndex = accruePreview.rates.length - 1;
-        uint256 lastRateLength = accruePreview.rates[lastRateIndex].tiers.length;
-        uint256[] memory rates = new uint256[](lastRateLength);
-        uint256[] memory caps = new uint256[](lastRateLength);
-        for (uint256 i = 0; i < lastRateLength; ++i) {
-            rates[i] = accruePreview.rates[lastRateIndex].tiers[i].rate;
-            caps[i] = accruePreview.rates[lastRateIndex].tiers[i].cap;
-        }
+        if (accruePreview.rates.length > 0) {
+            uint256 lastRateIndex = accruePreview.rates.length - 1;
+            uint256 lastRateLength = accruePreview.rates[lastRateIndex].tiers.length;
+            uint256[] memory rates = new uint256[](lastRateLength);
+            uint256[] memory caps = new uint256[](lastRateLength);
+            for (uint256 i = 0; i < lastRateLength; ++i) {
+                rates[i] = accruePreview.rates[lastRateIndex].tiers[i].rate;
+                caps[i] = accruePreview.rates[lastRateIndex].tiers[i].cap;
+            }
 
-        claimPreview.rates = rates;
-        claimPreview.caps = caps;
+            claimPreview.rates = rates;
+            claimPreview.caps = caps;
+        }
     }
 
     // ------------------ Overrides ------------------------------- //

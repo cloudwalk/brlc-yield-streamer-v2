@@ -97,6 +97,11 @@ interface IYieldStreamerPrimary_Functions {
     function claimAmountFor(address account, uint256 amount) external;
 
     /**
+     * @dev Returns true if the streamer is archived (all yield is zeroed out).
+     */
+    function isArchived() external view returns (bool);
+
+    /**
      * @dev Retrieves the current yield state for a given account.
      * Provides information about the account's yield accrual and balances.
      *

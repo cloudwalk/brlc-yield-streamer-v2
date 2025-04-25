@@ -25,6 +25,23 @@ abstract contract YieldStreamerConfiguration is
     // ------------------ Functions ------------------------------- //
 
     /**
+     * @dev Sets the archived state of the yield streamer contract.
+     *
+     * Emits an {IsArchivedChanged} event
+     *
+     * @param isArchived_ The flag that indicates if the yield streamer is archived.
+     */
+    function _setIsArchived(bool isArchived_) internal {
+        if (_yieldStreamerStorage().isArchived && isArchived_) {
+            revert YieldStreamer_ContractAlreadyArchived();
+        }
+
+        _yieldStreamerStorage().isArchived = isArchived_;
+
+        emit YieldStreamer_IsArchivedChanged(isArchived_);
+    }
+
+    /**
     //  * @dev Adds a new yield rate entry for a specific group.
     //  * The yield rate becomes effective starting from the specified effective day.
     //  * The `effectiveDay` represents the day index since the Unix epoch (i.e., number of days since timestamp zero).

@@ -22,6 +22,9 @@ interface IYieldStreamerConfiguration_Errors {
 
     /// @dev Thrown when attempting to assign an account to a group it is already assigned to.
     error YieldStreamer_GroupAlreadyAssigned(address account);
+
+    /// @dev Thrown when the yield streamer contract is already archived.
+    error YieldStreamer_ContractAlreadyArchived();
 }
 
 /**
@@ -85,6 +88,13 @@ interface IYieldStreamerConfiguration_Events {
         address indexed newFeeReceiver, // Tools: this comment prevents Prettier from formatting into a single line.
         address indexed oldFeeReceiver
     );
+
+    /**
+     * @dev Emitted when the archived state of the yield streamer contract is changed.
+     *
+     * @param isArchived The new archived state of the yield streamer contract.
+     */
+    event YieldStreamer_IsArchivedChanged(bool isArchived);
 }
 
 /**
@@ -93,6 +103,14 @@ interface IYieldStreamerConfiguration_Events {
  * @dev Defines the function signatures for the yield streamer configuration contract.
  */
 interface IYieldStreamerConfiguration_Functions {
+    /**
+     * @dev Sets the archived state of the yield streamer contract.
+     * When archived, yield calculation functions return zeroed values.
+     *
+     * @param isArchived If true, the yield streamer is considered archived.
+     */
+    function setIsArchived(bool isArchived) external;
+
     /**
      * @dev Adds a new yield rate for a specific group.
      * The yield rate becomes effective starting from the specified effective day.

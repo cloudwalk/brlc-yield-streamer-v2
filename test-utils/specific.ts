@@ -10,6 +10,7 @@ export const ERRORS = {
   YieldStreamer_AccountNotInitialized: "YieldStreamer_AccountNotInitialized",
   YieldStreamer_ClaimAmountBelowMinimum: "YieldStreamer_ClaimAmountBelowMinimum",
   YieldStreamer_ClaimAmountNonRounded: "YieldStreamer_ClaimAmountNonRounded",
+  YieldStreamer_ContractAlreadyArchived: "YieldStreamer_ContractAlreadyArchived",
   YieldStreamer_EmptyArray: "YieldStreamer_EmptyArray",
   YieldStreamer_FeeReceiverAlreadyConfigured: "YieldStreamer_FeeReceiverAlreadyConfigured",
   YieldStreamer_GroupAlreadyAssigned: "YieldStreamer_GroupAlreadyAssigned",

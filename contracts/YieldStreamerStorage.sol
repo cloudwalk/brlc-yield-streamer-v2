@@ -113,6 +113,7 @@ contract YieldStreamerStorage_Primary is IYieldStreamerTypes {
      * - `groups`: A mapping from account addresses to their assigned group.
      * - `yieldStates`: A mapping from account addresses to their yield state.
      * - `yieldRates`: A mapping from group IDs to arrays of yield rates applied to that group.
+     * - `isArchived`: A flag indicating whether the yield streamer is archived (all yield is zeroed out).
      *
      * @custom:storage-location erc7201:cloudwalk.yieldstreamer.primary.storage
      */
@@ -122,6 +123,7 @@ contract YieldStreamerStorage_Primary is IYieldStreamerTypes {
         mapping(address => Group) groups;
         mapping(address => YieldState) yieldStates;
         mapping(uint32 => YieldRate[]) yieldRates;
+        bool isArchived;
     }
 
     /**

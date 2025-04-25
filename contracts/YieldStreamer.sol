@@ -110,6 +110,20 @@ contract YieldStreamer is
     }
 
     /**
+     * @inheritdoc IYieldStreamerConfiguration_Functions
+     */
+    function setIsArchived(bool isArchived_) external onlyRole(OWNER_ROLE) {
+        _setIsArchived(isArchived_);
+    }
+
+    /**
+     * @inheritdoc IYieldStreamerPrimary_Functions
+     */
+    function isArchived() external view returns (bool) {
+        return _yieldStreamerStorage().isArchived;
+    }
+
+    /**
      * @inheritdoc IYieldStreamerPrimary_Functions
      */
     function getYieldState(address account) external view returns (YieldState memory) {
