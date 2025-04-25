@@ -2311,7 +2311,7 @@ describe("Contract 'YieldStreamer' regarding external functions", async () => {
       const previewBeforeRaw = await yieldStreamer.getClaimPreview(users[0].address);
       const previewBefore = normalizeClaimPreview(previewBeforeRaw);
 
-      expect(previewBefore).to.include({ balance: nonZeroState.lastUpdateBalance});
+      expect(previewBefore).to.include({ balance: nonZeroState.lastUpdateBalance });
       expect(previewBefore.rates.length).to.be.greaterThan(0);
       expect(previewBefore.caps.length).to.be.greaterThan(0);
       expect(previewBefore.yieldExact).to.be.greaterThanOrEqual(nonZeroState.accruedYield + nonZeroState.streamYield);
