@@ -294,7 +294,11 @@ abstract contract YieldStreamerPrimary is
         YieldState memory state,
         YieldRate[] memory rates,
         uint256 currentTimestamp
-    ) public pure returns (AccruePreview memory) {
+    ) public view returns (AccruePreview memory) {
+        if (_yieldStreamerStorage().isArchived) {
+            return AccruePreview(0, 0, 0, 0, 0, 0, 0, new YieldRate[](0), new YieldResult[](0));
+        }
+
         AccruePreview memory preview;
 
         preview.balance = state.lastUpdateBalance;

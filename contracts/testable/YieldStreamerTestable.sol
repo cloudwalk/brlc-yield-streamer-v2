@@ -45,7 +45,7 @@ contract YieldStreamerTestable is YieldStreamer {
         YieldState memory state,
         YieldRate[] memory rates,
         uint256 currentTimestamp
-    ) external pure returns (AccruePreview memory) {
+    ) external view returns (AccruePreview memory) {
         return _getAccruePreview(state, rates, currentTimestamp);
     }
 
