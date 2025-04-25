@@ -254,10 +254,6 @@ abstract contract YieldStreamerPrimary is
      * @return A `ClaimPreview` struct containing details of the claimable yield.
      */
     function _getClaimPreview(address account, uint256 currentTimestamp) internal view returns (ClaimPreview memory) {
-        if (_yieldStreamerStorage().isArchived) {
-            return ClaimPreview(0, 0, 0, 0, 0, 0, new uint256[](0), new uint256[](0));
-        }
-
         YieldStreamerStorageLayout storage $ = _yieldStreamerStorage();
         YieldState storage state = $.yieldStates[account];
         YieldRate[] storage rates = $.yieldRates[$.groups[account].id];
@@ -272,10 +268,6 @@ abstract contract YieldStreamerPrimary is
      * @return An `AccruePreview` struct containing details of the accrued yield.
      */
     function _getAccruePreview(address account, uint256 currentTimestamp) internal view returns (AccruePreview memory) {
-        if (_yieldStreamerStorage().isArchived) {
-            return AccruePreview(0, 0, 0, 0, 0, 0, 0, new YieldRate[](0), new YieldResult[](0));
-        }
-
         YieldStreamerStorageLayout storage $ = _yieldStreamerStorage();
         YieldState storage state = $.yieldStates[account];
         YieldRate[] storage rates = $.yieldRates[$.groups[account].id];
@@ -1054,17 +1046,19 @@ abstract contract YieldStreamerPrimary is
         claimPreview.timestamp = accruePreview.toTimestamp;
         claimPreview.balance = accruePreview.balance;
 
-        uint256 lastRateIndex = accruePreview.rates.length - 1;
-        uint256 lastRateLength = accruePreview.rates[lastRateIndex].tiers.length;
-        uint256[] memory rates = new uint256[](lastRateLength);
-        uint256[] memory caps = new uint256[](lastRateLength);
-        for (uint256 i = 0; i < lastRateLength; ++i) {
-            rates[i] = accruePreview.rates[lastRateIndex].tiers[i].rate;
-            caps[i] = accruePreview.rates[lastRateIndex].tiers[i].cap;
-        }
+        if (accruePreview.rates.length > 0) {
+            uint256 lastRateIndex = accruePreview.rates.length - 1;
+            uint256 lastRateLength = accruePreview.rates[lastRateIndex].tiers.length;
+            uint256[] memory rates = new uint256[](lastRateLength);
+            uint256[] memory caps = new uint256[](lastRateLength);
+            for (uint256 i = 0; i < lastRateLength; ++i) {
+                rates[i] = accruePreview.rates[lastRateIndex].tiers[i].rate;
+                caps[i] = accruePreview.rates[lastRateIndex].tiers[i].cap;
+            }
 
-        claimPreview.rates = rates;
-        claimPreview.caps = caps;
+            claimPreview.rates = rates;
+            claimPreview.caps = caps;
+        }
     }
 
     // ------------------ Overrides ------------------------------- //
